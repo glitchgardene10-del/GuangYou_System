@@ -1,5 +1,5 @@
 /**
- * auth-guard.js (v2.4 完整行政權限 + 越權踢回首頁版)
+ * auth-guard.js (v2.5 終極防呆大小寫免疫版)
  * 用途：
  * 1. 確保使用者已登入。
  * 2. 嚴格區分「老闆 (Manager)」與「行政 (Admin)」。
@@ -19,8 +19,7 @@
     const userSession = sessionStorage.getItem('kuangyou_user');
 
     // --- 情況 A: 未登入，且不在公開頁面 -> 踢回登入頁 ---
-    if (!userSession && !PUBLIC_PAGES.includes(currentPage)) {
-        // console.warn("⛔ 未登入，拒絕存取。");
+    if (!userSession && !PUBLIC_PAGES.includes(currentPage.toLowerCase())) {
         window.location.href = 'index.html';
         return;
     }
@@ -39,9 +38,10 @@
         }
 
         // ★★★ 權限設定：行政人員的白名單 ★★★
+        // 這裡全部寫小寫即可，下方檢查時會自動把網址轉成小寫來比對
         const ADMIN_ALLOWED_PAGES = [
             'admin_portal.html',       // 行政入口
-            'employee.html',           // ★ 修正大小寫：人事資料
+            'employee.html',           // 人事資料
             'leave.html',              // 特休管理
             'attendance_admin.html',   // 考勤管理
             'salary.html',             // 行政薪資
@@ -57,7 +57,7 @@
         const isAdmin = (role === 'admin');
 
         // 1. 如果在登入頁 (index.html) 且已登入，自動導向首頁
-        if (PUBLIC_PAGES.includes(currentPage)) {
+        if (PUBLIC_PAGES.includes(currentPage.toLowerCase())) {
             if (isBoss) window.location.href = 'accounting_portal.html'; // 老闆去財務中心
             else window.location.href = 'admin_portal.html';             // 行政去行政中心
             return;
@@ -68,12 +68,14 @@
             return; 
         }
 
-        // 3. 行政權限：嚴格檢查白名單
+        // 3. 行政權限：嚴格檢查白名單 (自動忽略大小寫差異)
         if (isAdmin) {
-            if (!ADMIN_ALLOWED_PAGES.includes(currentPage)) {
+            const isAllowed = ADMIN_ALLOWED_PAGES.includes(currentPage.toLowerCase());
+            
+            if (!isAllowed) {
                 alert("⛔ 越權警告：權限不足，已將您強制登出並返回首頁！");
-                sessionStorage.removeItem('kuangyou_user'); // ★ 強制登出
-                window.location.href = 'index.html';        // ★ 踢回登入頁
+                sessionStorage.removeItem('kuangyou_user'); // 強制登出
+                window.location.href = 'index.html';        // 踢回登入頁
                 return;
             }
         }
