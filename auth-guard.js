@@ -1,5 +1,5 @@
 /**
- * auth-guard.js (v2.3 完整行政權限版)
+ * auth-guard.js (v2.4 完整行政權限 + 越權踢回首頁版)
  * 用途：
  * 1. 確保使用者已登入。
  * 2. 嚴格區分「老闆 (Manager)」與「行政 (Admin)」。
@@ -41,15 +41,15 @@
         // ★★★ 權限設定：行政人員的白名單 ★★★
         const ADMIN_ALLOWED_PAGES = [
             'admin_portal.html',       // 行政入口
-            'employee.HTML',           // 人事資料
+            'employee.html',           // ★ 修正大小寫：人事資料
             'leave.html',              // 特休管理
             'attendance_admin.html',   // 考勤管理
             'salary.html',             // 行政薪資
             'salary_caregiver.html',   // 居服薪資
             'assessment.html',         // 考核系統
             'income_management.html',  // 應收帳款管理
-            'expense_log.html',        // ★ 新增：零用金管理
-            'bill_reminder.html'       // ★ 新增：帳單提醒
+            'expense_log.html',        // 零用金管理
+            'bill_reminder.html'       // 帳單提醒
         ];
 
         // 判斷角色權限
@@ -71,8 +71,9 @@
         // 3. 行政權限：嚴格檢查白名單
         if (isAdmin) {
             if (!ADMIN_ALLOWED_PAGES.includes(currentPage)) {
-                alert("⛔ 越權警告：行政人員無法存取財務或系統設定頁面！");
-                window.location.href = 'admin_portal.html'; // 踢回行政入口
+                alert("⛔ 越權警告：權限不足，已將您強制登出並返回首頁！");
+                sessionStorage.removeItem('kuangyou_user'); // ★ 強制登出
+                window.location.href = 'index.html';        // ★ 踢回登入頁
                 return;
             }
         }
