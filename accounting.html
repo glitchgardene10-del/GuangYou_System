@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>光祐會計內帳系統 (v18.1 銀行格式精準修復版)</title>
+    
+    <script src="auth-guard.js"></script>
+    <script type="module" src="config.js"></script>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dayjs/1.11.10/dayjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Noto Sans TC', sans-serif; background-color: #f1f5f9; }
+        .animate-fade-in { animation: fadeIn 0.5s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef } = React;
+
+        const AccountingApp = () => {
+            const [activeTab, setActiveTab] = useState('dashboard');
+            const [journals, setJournals] = useState([]);
+            const [accounts, setAccounts] = useState([]); 
+            const [loading, setLoading] = useState(false);
+            const [syncMonth, setSyncMonth] = useState(dayjs().subtract(1, 'month').format('YYYY-MM'));
+            const [isAuthReady, setIsAuthReady] = useState(false);
+            const [currentUser, setCurrentUser] = useState(JSON.parse(sessionStorage.getItem('kuangyou_user') || '{}'));
+            
+            const [pettyCashBalance, setPettyCashBalance] = useState(0); 
+            const [journalFilterMonth, setJournalFilterMonth] = useState(dayjs().format('YYYY-MM'));
+            const [ledgerFilterMonth, setLedgerFilterMonth] = useState(dayjs().format('YYYY-MM'));
+
+            const [showModal, setShowModal] = useState(false);
+            const [entryDate, setEntryDate] = useState(dayjs().format('YYYY-MM-DD'));
+            const [entryDesc, setEntryDesc] = useState('');
+            const [entryRows, setEntryRows] = useState([{ account: '', debit: 0, credit: 0 }, { account: '', debit: 0, credit: 0 }]);
+
+            const [showPayrollModal, setShowPayrollModal] = useState(false);
+            const [payrollEmployees, setPayrollEmployees] = useState([]);
+            const [selectedAccount, setSelectedAccount] = useState('');
+            
+            const fileInputRef = useRef(null);
+
+            useEffect(() => {
+                const timer = setInterval(() => {
+                    if (window.db && window.auth) {
+                        clearInterval(timer);
+                        setIsAuthReady(true);
+                    }
+                }, 100);
+                return () => clearInterval(timer);
+            }, []);
+
+            useEffect(() => {
+                if (isAuthReady) { fetchJournals(); fetchAccounts(); fetchPettyCash(); }
+            }, [isAuthReady]);
+
+            const fetchPettyCash = async () => { try { const docSnap = await window.getDoc(window.doc(window.db, "system_settings", "petty_cash")); if(docSnap.exists()) setPettyCashBalance(docSnap.data().balance || 0); } catch(e) {} };
+            const fetchJournals = async () => { setLoading(true); try { const q = window.query(window.collection(window.db, "accounting_journal"), window.orderBy("date", "desc")); const snap = await window.getDocs(q); const list = []; snap.forEach(d => list.push({ id: d.id, ...d.data() })); setJournals(list); } catch (e) { console.error(e); } setLoading(false); };
+            const fetchAccounts = async () => { try { const q = window.query(window.collection(window.db, "accounting_accounts"), window.orderBy("code")); const snap = await window.getDocs(q); const list = []; snap.forEach(d => list.push(d.data())); setAccounts(list); } catch (e) { console.error(e); } };
+
+            const dashboardData = useMemo(() => {
+                let totalBank = 0; let totalCashBoss = 0; let revenueThisMonth = 0; let expenseThisMonth = 0; let personnelCost = 0; 
+                const today = dayjs(); const currentMonthPrefix = today.format('YYYY-MM'); const last6Months = [];
+                for(let i=5; i>=0; i--) { last6Months.push({ month: today.subtract(i, 'month').format('YYYY-MM'), income: 0, expense: 0 }); }
+
+                journals.forEach(j => {
+                    const jMonth = j.date.substring(0, 7);
+                    j.entries.forEach(e => {
+                        const code = String(e.code || ""); const amount = Number(e.amount);
+                        if (['1102', '1103', '1104', '1105'].some(prefix => code.startsWith(prefix))) { if (code !== '1105') { e.type === 'debit' ? totalBank += amount : totalBank -= amount; } }
+                        if (code.startsWith('1101')) { e.type === 'debit' ? totalCashBoss += amount : totalCashBoss -= amount; }
+                        if (jMonth === currentMonthPrefix) { if (code.startsWith('4')) { e.type === 'credit' ? revenueThisMonth += amount : revenueThisMonth -= amount; } else if (code.startsWith('5')) { e.type === 'debit' ? expenseThisMonth += amount : expenseThisMonth -= amount; if (code.startsWith('51')) personnelCost += amount; } }
+                        const monthData = last6Months.find(m => m.month === jMonth); if (monthData) { if (code.startsWith('4')) e.type === 'credit' ? monthData.income += amount : monthData.income -= amount; if (code.startsWith('5')) e.type === 'debit' ? monthData.expense += amount : monthData.expense -= amount; }
+                    });
+                });
+                const netProfit = revenueThisMonth - expenseThisMonth;
+                const profitMargin = revenueThisMonth > 0 ? (netProfit / revenueThisMonth * 100).toFixed(1) : 0;
+                const personnelPercent = expenseThisMonth > 0 ? (personnelCost / expenseThisMonth * 100).toFixed(1) : 0;
+                return { totalBank, totalCashBoss, revenueThisMonth, expenseThisMonth, netProfit, profitMargin, personnelCost, personnelPercent, trend: last6Months };
+            }, [journals]);
+
+            // --- ★★★ 銀行轉帳檔生成 (精準對齊修正) ★★★ ---
+            
+            const getBig5Length = (str) => {
+                let len = 0;
+                for (let i = 0; i < str.length; i++) {
+                    const c = str.charCodeAt(i);
+                    // 判斷是否為全形字 (中文)
+                    if ((c >= 0x0001 && c <= 0x007e) || (0xff60 <= c && c <= 0xff9f)) { len++; } else { len += 2; }
+                }
+                return len;
+            };
+
+            const generateBankFile = () => {
+                const targetEmployees = payrollEmployees.filter(e => !e.isCash && e.bankCode === '006');
+                if (targetEmployees.length === 0) return alert("沒有需要匯款的合庫帳號資料！");
+
+                let lines = [];
+                let totalAmount = 0;
+
+                targetEmployees.forEach(emp => {
+                    if (!emp.bankAccount) return; 
+
+                    const empAccount = emp.bankAccount.replace(/\D/g,''); 
+                    
+                    // ★ 修正 1：金額 13 碼 (整數11碼 + "00")，不多0了！
+                    const netStr = Math.round(emp.net).toString();
+                    const amountStr = netStr.padStart(11, '0') + "00"; 
+                    
+                    const cleanName = emp.name.replace(/,/g, '').trim(); 
+                    
+                    let line = "";
+                    line += "  "; // 2 空白
+                    line += empAccount.padEnd(13, ' '); // 13 帳號
+                    line += amountStr; // 13 金額
+                    line += "          "; // 10 空白
+                    line += cleanName; // 姓名 (可變長度)
+                    
+                    // ★ 修正 2：利用 Big5 邏輯，精準補滿 80 Bytes，不多空格了！
+                    const currentLen = getBig5Length(line);
+                    const targetLen = 80; 
+                    if (currentLen < targetLen) {
+                        line += " ".repeat(targetLen - currentLen);
+                    }
+                    
+                    lines.push(line);
+                    totalAmount += emp.net;
+                });
+
+                // 組合字串，最後一定要有換行 (CRLF)
+                const fileString = lines.join("\r\n") + "\r\n";
+
+                // 純文字檔下載
+                const blob = new Blob([fileString], { type: "text/plain;charset=utf-8" });
+                saveAs(blob, `result_${dayjs().format('YYYYMMDD')}.txt`);
+                
+                alert(`✅ 已匯出 ${targetEmployees.length} 筆資料。\n\n⚠️ 【極度重要】上傳銀行前，請務必按右鍵用「記事本」開啟此檔案 -> 點選「檔案」->「另存新檔」-> 下方編碼選擇「ANSI」後存檔，才能成功上傳！`);
+            };
+
+            const generateInterbankList = () => {
+                const targetEmployees = payrollEmployees.filter(e => !e.isCash && e.bankCode !== '006');
+                if (targetEmployees.length === 0) return alert("沒有跨行轉帳資料！");
+                let content = "跨行轉帳清單\n----------------------------------------\n";
+                targetEmployees.forEach(e => { content += `姓名: ${e.name}\n銀行: ${e.bankCode} / 帳號: ${e.bankAccount}\n金額: ${e.net}\n----------------------------------------\n`; });
+                const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+                saveAs(blob, `interbank_list_${dayjs().format('YYYYMMDD')}.txt`);
+            };
+
+            // --- 薪資讀取 ---
+            const fetchPayrollData = async () => {
+                const checkQ = window.query(window.collection(window.db, "accounting_journal"), window.where("source", "==", `PAYROLL_${syncMonth}`));
+                const checkSnap = await window.getDocs(checkQ);
+                if(!checkSnap.empty) return alert("⚠️ 該月份薪資已拋轉過！");
+
+                setLoading(true);
+                try {
+                    const empMap = {};
+                    const empSnap = await window.getDocs(window.query(window.collection(window.db, "employees")));
+                    empSnap.forEach(doc => {
+                        const d = doc.data();
+                        empMap[doc.id] = { name: d.name || '未知', bankCode: d.bankCode || '006', bankAccount: d.bankAccount || '' };
+                    });
+
+                    let tempList = [];
+                    const qCare = window.query(window.collection(window.db, "monthly_records"), window.where("yearMonth", "==", syncMonth));
+                    const snapCare = await window.getDocs(qCare);
+                    snapCare.forEach(doc => {
+                        const d = doc.data();
+                        if(d.finalResult) {
+                            const empInfo = empMap[d.empId] || { name: d.caregiverName||d.name, bankCode: '006', bankAccount: '' };
+                            tempList.push({ 
+                                id: doc.id, name: empInfo.name, role: 'caregiver', 
+                                gross: Number(d.finalResult.grossSalary)||0, net: Number(d.finalResult.netSalary)||0, pension: Number(d.finalResult.employerPension)||0, totalDeduct: Number(d.finalResult.totalDeduction)||0, laborFee: Number(d.finalResult.laborFee || 0), healthFee: Number(d.finalResult.healthFee || 0),
+                                isCash: false, bankCode: empInfo.bankCode, bankAccount: empInfo.bankAccount
+                            });
+                        }
+                    });
+
+                    const docRefAdmin = window.doc(window.db, "salary_records_admin", syncMonth);
+                    const snapAdmin = await window.getDoc(docRefAdmin);
+                    if(snapAdmin.exists()) {
+                        const adminData = snapAdmin.data();
+                        Object.keys(adminData).forEach(empId => {
+                            const empRecord = adminData[empId];
+                            if(empRecord.finalResult) {
+                                const empInfo = empMap[empId] || { name: '未知行政', bankCode: '006', bankAccount: '' };
+                                tempList.push({ 
+                                    id: empId, name: empInfo.name, role: 'admin', 
+                                    gross: Number(empRecord.finalResult.grossSalary)||0, net: Number(empRecord.finalResult.netSalary)||0, pension: Number(empRecord.finalResult.employerPension)||0, totalDeduct: Number(empRecord.finalResult.totalDeduction)||0, laborFee: Number(empRecord.snapshot?.laborIns || 0), healthFee: Number(empRecord.snapshot?.healthIns || 0),
+                                    isCash: false, bankCode: empInfo.bankCode, bankAccount: empInfo.bankAccount
+                                });
+                            }
+                        });
+                    }
+
+                    if (tempList.length === 0) alert(`❌ [${syncMonth}] 查無資料`);
+                    else {
+                        tempList.sort((a,b) => (a.role === b.role) ? 0 : (a.role === 'admin' ? -1 : 1));
+                        setPayrollEmployees(tempList);
+                        setShowPayrollModal(true);
+                    }
+                } catch(e) { console.error(e); alert("讀取薪資資料失敗"); }
+                setLoading(false);
+            };
+
+            const togglePaymentMethod = (index) => { const newList = [...payrollEmployees]; newList[index].isCash = !newList[index].isCash; setPayrollEmployees(newList); };
+
+            const confirmPayrollSync = async () => {
+                setLoading(true);
+                try {
+                    const batch = window.writeBatch(window.db);
+                    let grossCare = 0, grossAdmin = 0, totalPension = 0; let payoutBank = 0, payoutCash = 0; let sumLabor = 0, sumHealth = 0, sumOtherDeduct = 0;
+                    payrollEmployees.forEach(emp => {
+                        if (emp.role === 'caregiver') grossCare += emp.gross; else grossAdmin += emp.gross;
+                        totalPension += emp.pension;
+                        if (emp.isCash) payoutCash += emp.net; else payoutBank += emp.net;
+                        if (emp.laborFee > 0 || emp.healthFee > 0) { sumLabor += emp.laborFee; sumHealth += emp.healthFee; sumOtherDeduct += (emp.totalDeduct - emp.laborFee - emp.healthFee); } else { sumOtherDeduct += emp.totalDeduct; }
+                    });
+                    const entries = [];
+                    if (grossCare > 0) entries.push({ type: 'debit', code: '5101', name: '薪資支出-居服員', amount: grossCare });
+                    if (grossAdmin > 0) entries.push({ type: 'debit', code: '5101', name: '薪資支出-行政', amount: grossAdmin });
+                    if (totalPension > 0) entries.push({ type: 'debit', code: '5102', name: '退休金支出', amount: totalPension });
+                    if (payoutBank > 0) entries.push({ type: 'credit', code: '1102', name: '銀行存款', amount: payoutBank });
+                    if (payoutCash > 0) entries.push({ type: 'credit', code: '1101', name: '庫存現金', amount: payoutCash });
+                    if (sumLabor > 0) entries.push({ type: 'credit', code: '2202', name: '應付勞保費', amount: sumLabor });
+                    if (sumHealth > 0) entries.push({ type: 'credit', code: '2203', name: '應付健保費', amount: sumHealth });
+                    if (sumOtherDeduct > 0) entries.push({ type: 'credit', code: '2201', name: '其他代扣款', amount: sumOtherDeduct });
+                    if (totalPension > 0) entries.push({ type: 'credit', code: '2204', name: '應付退休金', amount: totalPension });
+                    const journalRef = window.doc(window.collection(window.db, "accounting_journal"));
+                    batch.set(journalRef, { date: dayjs().format('YYYY-MM-DD'), description: `${syncMonth} 薪資發放`, source: `PAYROLL_${syncMonth}`, entries, totalAmount: grossCare + grossAdmin + totalPension, createdAt: new Date().toISOString(), recorder: currentUser.name });
+                    await batch.commit(); alert("✅ 薪資拋轉成功！"); setShowPayrollModal(false); fetchJournals();
+                } catch(e) { alert("失敗：" + e.message); }
+                setLoading(false);
+            };
+
+            const syncExpenses = async () => {
+                setLoading(true); try { const q = window.query(window.collection(window.db, "accounting_expenses"), window.where("status", "==", "pending")); const snap = await window.getDocs(q); if (snap.empty) { alert("沒有未入帳的流水帳"); setLoading(false); return; } if(!confirm(`拋轉 ${snap.size} 筆流水帳？`)) { setLoading(false); return; } let batchOps = window.writeBatch(window.db); let entries = [], totalAmount = 0, idList = []; snap.forEach(doc => { const d = doc.data(); const amount = Number(d.amount); let debitCode, creditCode; let debitName, creditName; if (d.type === 'expense') { const matchedAccount = accounts.find(acc => acc.name === d.category); if (matchedAccount) { debitCode = matchedAccount.code; debitName = matchedAccount.name; } else { debitCode = "5299"; debitName = `${d.category || '雜項'} (未分類)`; } if (d.payer === 'petty_cash') { creditCode = '1105'; creditName = '零用金'; } else if (d.payer === 'boss_paid') { creditCode = '2801'; creditName = '股東往來'; } else if (d.payer === 'bank') { creditCode = '1102'; creditName = '銀行存款'; } else { creditCode = d.payer; creditName = '其他付款'; } } else if (d.type === 'income') { debitCode = '1105'; debitName = '零用金'; creditCode = d.payer; creditName = '資金來源'; } else if (d.type === 'return') { debitCode = d.payer; debitName = '資金去向'; creditCode = '1105'; creditName = '零用金'; } entries.push({ type: 'debit', code: debitCode, name: debitName, amount }); entries.push({ type: 'credit', code: creditCode, name: creditName, amount }); totalAmount += amount; idList.push(doc.id); batchOps.update(doc.ref, { status: 'locked', lockedAt: new Date().toISOString() }); }); const journalRef = window.doc(window.collection(window.db, "accounting_journal")); batchOps.set(journalRef, { date: dayjs().format('YYYY-MM-DD'), description: `匯入行政流水帳 (${snap.size}筆)`, source: 'EXPENSE_IMPORT', entries, totalAmount, relatedExpenseIds: idList, createdAt: new Date().toISOString(), recorder: currentUser.name }); await batchOps.commit(); alert("✅ 拋轉成功！"); fetchJournals(); } catch(e) { console.error(e); alert("失敗：" + e.message); } setLoading(false);
+            };
+
+            const deleteEntry = async (id) => { if(!confirm("確定刪除此傳票？\n如果是流水帳或帳單支付，相關紀錄將會回復(Pending/Unpaid)。")) return; setLoading(true); try { const docRef = window.doc(window.db, "accounting_journal", id); const docSnap = await window.getDoc(docRef); if (docSnap.exists()) { const data = docSnap.data(); const batch = window.writeBatch(window.db); if (data.relatedExpenseIds && data.relatedExpenseIds.length > 0) { data.relatedExpenseIds.forEach(expId => { const expRef = window.doc(window.db, "accounting_expenses", expId); batch.update(expRef, { status: 'pending', lockedAt: window.deleteField() }); }); } if (data.relatedBillId) { const billRef = window.doc(window.db, "bill_requests", data.relatedBillId); batch.update(billRef, { status: 'pending', paidAt: window.deleteField(), payer: window.deleteField(), paymentMethod: window.deleteField(), paymentSource: window.deleteField() }); } batch.delete(docRef); await batch.commit(); alert("✅ 刪除成功，相關紀錄已復原！"); fetchJournals(); } } catch(e) { console.error(e); alert("刪除失敗"); } setLoading(false); };
+            const handleRowChange = (index, field, value) => { const newRows = [...entryRows]; newRows[index][field] = value; setEntryRows(newRows); };
+            const addRow = () => setEntryRows([...entryRows, { account: '', debit: 0, credit: 0 }]);
+            const removeRow = (index) => setEntryRows(entryRows.filter((_, i) => i !== index));
+            const saveManualEntry = async () => { if (!entryDesc) return alert("請輸入摘要"); const entries = []; let debitSum = 0, creditSum = 0; entryRows.forEach(r => { if (!r.account) return; const acc = accounts.find(a => a.code === r.account); if (Number(r.debit) > 0) { entries.push({ type: 'debit', code: r.account, name: acc?.name||'?', amount: Number(r.debit) }); debitSum += Number(r.debit); } if (Number(r.credit) > 0) { entries.push({ type: 'credit', code: r.account, name: acc?.name||'?', amount: Number(r.credit) }); creditSum += Number(r.credit); } }); if (entries.length === 0 || debitSum !== creditSum) return alert("借貸不平衡"); try { await window.addDoc(window.collection(window.db, "accounting_journal"), { date: entryDate, description: entryDesc, source: 'MANUAL', entries, totalAmount: debitSum, createdAt: new Date().toISOString(), recorder: currentUser.name }); alert("✅ 儲存成功"); setShowModal(false); fetchJournals(); } catch(e) { alert("失敗"); } };
+            const ledgerData = useMemo(() => { if(!selectedAccount) return []; let balance = 0; let fullHistory = journals.sort((a,b)=>dayjs(a.date).unix()-dayjs(b.date).unix()).map(j => { const match = j.entries.find(e => e.code === selectedAccount); if(!match) return null; const d = match.type === 'debit' ? Number(match.amount) : 0; const c = match.type === 'credit' ? Number(match.amount) : 0; if(['1','5'].includes(selectedAccount[0])) balance += (d - c); else balance += (c - d); return { date: j.date, desc: j.description, source: j.source, debit: d, credit: c, balance }; }).filter(Boolean); const filterStart = ledgerFilterMonth; const startIndex = fullHistory.findIndex(r => r.date.startsWith(filterStart)); const filteredList = fullHistory.filter(r => r.date.startsWith(filterStart)); if (startIndex > 0) { filteredList.unshift({ date: `${filterStart}-01`, desc: "【期初餘額 / 承前頁】", source: "SYSTEM", debit: 0, credit: 0, balance: fullHistory[startIndex - 1].balance, isOpening: true }); } else if (startIndex === -1 && fullHistory.length > 0 && fullHistory[fullHistory.length-1].date < filterStart) { filteredList.push({ date: `${filterStart}-01`, desc: "【期初餘額】", source: "SYSTEM", debit: 0, credit: 0, balance: fullHistory[fullHistory.length-1].balance, isOpening: true }); } return filteredList; }, [journals, selectedAccount, ledgerFilterMonth]);
+            const filteredJournals = useMemo(() => { return journals.filter(j => j.date.startsWith(journalFilterMonth)); }, [journals, journalFilterMonth]);
+
+            // --- 備份與還原功能 ---
+            const handleBackup = async () => {
+                if(!confirm("即將下載系統完整備份檔，請確保檔案安全存放。繼續嗎？")) return;
+                setLoading(true);
+                try {
+                    const collectionsToBackup = [
+                        'accounting_journal', 'accounting_accounts', 'accounting_expenses',
+                        'system_settings', 'bill_requests', 'employees',
+                        'monthly_records', 'salary_records_admin'
+                    ];
+                    const backupData = {};
+                    
+                    for (const colName of collectionsToBackup) {
+                        const snap = await window.getDocs(window.collection(window.db, colName));
+                        backupData[colName] = {};
+                        snap.forEach(doc => { backupData[colName][doc.id] = doc.data(); });
+                    }
+                    
+                    const backupJSON = JSON.stringify({ timestamp: new Date().toISOString(), version: '1.0', data: backupData }, null, 2);
+                    const blob = new Blob([backupJSON], { type: "application/json;charset=utf-8" });
+                    saveAs(blob, `KuangYou_Backup_${dayjs().format('YYYYMMDD_HHmm')}.json`);
+                    alert("✅ 備份下載成功！");
+                } catch (e) { console.error(e); alert("備份失敗：" + e.message); }
+                setLoading(false);
+            };
+
+            const handleRestore = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = async (event) => {
+                    try {
+                        const json = JSON.parse(event.target.result);
+                        if (!json.data) throw new Error("無效的備份檔格式 (找不到 data 節點)");
+                        if (!confirm(`⚠️ 極度危險操作 ⚠️\n\n您正在還原 ${dayjs(json.timestamp).format('YYYY-MM-DD HH:mm')} 的備份檔。\n這將會【覆蓋並取代】雲端上所有的現有資料。\n\n確定要繼續嗎？`)) {
+                            if(fileInputRef.current) fileInputRef.current.value = ""; return;
+                        }
+                        setLoading(true);
+                        let totalCount = 0;
+                        const collections = Object.keys(json.data);
+                        for (const colName of collections) {
+                            const docs = json.data[colName];
+                            const docIds = Object.keys(docs);
+                            const chunkSize = 400;
+                            for (let i = 0; i < docIds.length; i += chunkSize) {
+                                const chunk = docIds.slice(i, i + chunkSize);
+                                const batch = window.writeBatch(window.db);
+                                chunk.forEach(docId => { const docRef = window.doc(window.db, colName, docId); batch.set(docRef, docs[docId]); totalCount++; });
+                                await batch.commit();
+                            }
+                        }
+                        alert(`✅ 資料庫還原成功！共覆蓋 ${totalCount} 筆資料。\n系統即將重新載入以套用最新資料。`);
+                        window.location.reload();
+                    } catch (error) { alert("還原失敗：" + error.message); if(fileInputRef.current) fileInputRef.current.value = ""; }
+                    setLoading(false);
+                };
+                reader.readAsText(file);
+            };
+
+            return (
+                <div className="flex h-screen overflow-hidden">
+                    {loading && (
+                        <div className="fixed inset-0 bg-white/70 backdrop-blur-sm z-[100] flex flex-col items-center justify-center">
+                            <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                            <div className="mt-4 font-bold text-blue-800 text-lg">系統處理中，請稍候...</div>
+                        </div>
+                    )}
+
+                    <div className="w-64 bg-slate-900 text-white flex flex-col p-4 shadow-xl shrink-0 z-10">
+                        <div className="text-2xl font-black tracking-widest mb-10 text-center">KUANG-YOU<div className="text-xs font-normal opacity-50 tracking-normal">ACCOUNTING</div></div>
+                        <nav className="flex-1 space-y-2">
+                            <button onClick={()=>setActiveTab('dashboard')} className={`w-full text-left p-3 rounded-lg transition ${activeTab==='dashboard'?'bg-blue-600 text-white':'hover:bg-slate-800 text-slate-400'}`}>📊 老闆戰情室</button>
+                            <button onClick={()=>setActiveTab('journal')} className={`w-full text-left p-3 rounded-lg transition ${activeTab==='journal'?'bg-blue-600 text-white':'hover:bg-slate-800 text-slate-400'}`}>📒 日記帳 (流水)</button>
+                            <button onClick={()=>setActiveTab('ledger')} className={`w-full text-left p-3 rounded-lg transition ${activeTab==='ledger'?'bg-blue-600 text-white':'hover:bg-slate-800 text-slate-400'}`}>📑 分類帳 (明細)</button>
+                            <button onClick={()=>setActiveTab('sync')} className={`w-full text-left p-3 rounded-lg transition ${activeTab==='sync'?'bg-emerald-600 text-white':'hover:bg-slate-800 text-emerald-400'}`}>🔄 自動拋轉作業</button>
+                            
+                            <div className="pt-6 pb-2 border-b border-slate-700/50 mb-2"><div className="text-[10px] uppercase font-bold text-slate-500 px-3 tracking-wider">System</div></div>
+                            <button onClick={()=>setActiveTab('settings')} className={`w-full text-left p-3 rounded-lg transition ${activeTab==='settings'?'bg-slate-700 text-white':'hover:bg-slate-800 text-slate-400'}`}>⚙️ 系統設定與備份</button>
+                        </nav>
+                        <a href="accounting_portal.html" className="text-xs text-slate-500 text-center mt-auto hover:text-white pb-2">← 返回入口</a>
+                    </div>
+
+                    <div className="flex-1 bg-slate-100 overflow-auto p-8 relative">
+                        {activeTab === 'dashboard' && (
+                            <div className="space-y-6 animate-fade-in">
+                                <div className="flex justify-between items-center mb-2">
+                                    <h2 className="text-2xl font-bold text-slate-800">經營概況戰情室</h2>
+                                    <span className="text-sm text-slate-500">數據更新: {dayjs().format('YYYY-MM-DD HH:mm')}</span>
+                                </div>
+                                <div className="grid grid-cols-3 gap-6">
+                                    <div className="bg-gradient-to-br from-emerald-500 to-teal-700 rounded-2xl p-6 text-white shadow-lg relative overflow-hidden">
+                                        <div className="relative z-10"><div className="flex justify-between items-start"><div className="text-emerald-100 text-sm font-bold tracking-wider mb-1">CASH (1101 庫存現金)</div></div><div className={`text-4xl font-black font-mono ${dashboardData.totalCashBoss < 0 ? 'text-red-300' : 'text-white'}`}>${new Intl.NumberFormat().format(dashboardData.totalCashBoss)}</div><div className="mt-4 text-xs opacity-80 border-t border-white/20 pt-2">老闆金庫 (會計傳票實時計算)</div></div>
+                                    </div>
+                                    <div className="bg-gradient-to-br from-orange-500 to-amber-700 rounded-2xl p-6 text-white shadow-lg relative overflow-hidden">
+                                        <div className="relative z-10"><div className="flex justify-between items-start"><div className="text-orange-100 text-sm font-bold tracking-wider mb-1">PETTY CASH (1105 零用金)</div></div><div className={`text-4xl font-black font-mono ${pettyCashBalance < 0 ? 'text-red-300' : 'text-white'}`}>${new Intl.NumberFormat().format(pettyCashBalance)}</div><div className="mt-4 text-xs opacity-80 border-t border-white/20 pt-2">行政櫃台 (即時連線)</div></div>
+                                    </div>
+                                    <div className="bg-gradient-to-br from-blue-600 to-indigo-800 rounded-2xl p-6 text-white shadow-lg relative overflow-hidden">
+                                        <div className="relative z-10"><div className="text-blue-100 text-sm font-bold tracking-wider mb-1">BANK (1102~ 銀行存款)</div><div className="text-4xl font-black font-mono">${new Intl.NumberFormat().format(dashboardData.totalBank)}</div><div className="mt-4 text-xs opacity-80 border-t border-white/20 pt-2">所有銀行帳戶總計</div></div>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-3 gap-6">
+                                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 col-span-2">
+                                        <div className="flex justify-between items-end mb-4 border-b pb-2"><h3 className="font-bold text-slate-700 text-lg">損益分析 ({dayjs().format('MM月')})</h3><div className={`text-xl font-black ${dashboardData.netProfit >= 0 ? 'text-blue-600' : 'text-red-500'}`}>淨利: ${new Intl.NumberFormat().format(dashboardData.netProfit)}<span className="text-sm ml-2 bg-slate-100 px-2 py-1 rounded text-slate-500">{dashboardData.profitMargin}%</span></div></div>
+                                        <div className="grid grid-cols-2 gap-8">
+                                            <div><div className="text-xs text-slate-400 mb-1">營業收入</div><div className="h-4 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-emerald-500" style={{width: '100%'}}></div></div><div className="text-right font-bold mt-1 text-emerald-600">${new Intl.NumberFormat().format(dashboardData.revenueThisMonth)}</div></div>
+                                            <div><div className="text-xs text-slate-400 mb-1">營業費用 (含薪資)</div><div className="h-4 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-red-500" style={{width: `${(dashboardData.expenseThisMonth / (dashboardData.revenueThisMonth || 1)) * 100}%`}}></div></div><div className="text-right font-bold mt-1 text-red-600">${new Intl.NumberFormat().format(dashboardData.expenseThisMonth)}</div></div>
+                                        </div>
+                                    </div>
+                                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200"><h3 className="font-bold text-slate-700 text-lg mb-4 border-b pb-2">人事成本佔比</h3><div className="flex flex-col items-center justify-center h-32"><div className="text-5xl font-black text-slate-800">{dashboardData.personnelPercent}<span className="text-xl">%</span></div><div className="text-xs text-slate-400 mt-2">人事支出 / 總支出</div></div><div className="text-center text-sm font-bold text-slate-600">$ {new Intl.NumberFormat().format(dashboardData.personnelCost)}</div></div>
+                                </div>
+                            </div>
+                        )}
+                        {activeTab === 'sync' && (
+                            <div className="grid grid-cols-2 gap-8 animate-fade-in">
+                                <div className="bg-white p-8 rounded-2xl shadow-lg border border-slate-200 text-center flex flex-col items-center">
+                                    <div className="text-5xl mb-4">💰</div><h2 className="text-2xl font-bold text-slate-800 mb-2">薪資拋轉</h2><p className="text-slate-500 mb-6 text-sm">自動計算薪資、勞健保與付款方式</p><input type="month" value={syncMonth} onChange={e=>setSyncMonth(e.target.value)} className="border rounded p-2 text-lg font-bold mb-4" /><button onClick={fetchPayrollData} disabled={loading} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl shadow-md disabled:opacity-50">🚀 1. 抓取資料 & 設定支付方式</button>
+                                </div>
+                                <div className="bg-white p-8 rounded-2xl shadow-lg border border-slate-200 text-center flex flex-col items-center">
+                                    <div className="text-5xl mb-4">🧾</div><h2 className="text-2xl font-bold text-slate-800 mb-2">流水帳拋轉</h2><p className="text-slate-500 mb-6 text-sm">將行政雜支轉為傳票</p><div className="h-[54px]"></div><button onClick={syncExpenses} disabled={loading} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl shadow-md disabled:opacity-50">📥 匯入未入帳支出</button>
+                                </div>
+                            </div>
+                        )}
+                        {activeTab === 'journal' && (<div className="animate-fade-in"><div className="flex justify-between items-center mb-6"><div className="flex items-center gap-4"><h2 className="text-2xl font-bold text-slate-800">日記帳</h2><input type="month" value={journalFilterMonth} onChange={e=>setJournalFilterMonth(e.target.value)} className="border-2 border-slate-300 rounded-lg p-1 font-bold text-slate-600" /></div><button onClick={()=>setShowModal(true)} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold shadow">➕ 新增分錄</button></div><div className="bg-white rounded-xl shadow-sm border overflow-hidden">{filteredJournals.length === 0 ? <div className="p-10 text-center text-slate-400">本月尚無傳票資料</div> : filteredJournals.map(j => (<div key={j.id} className="p-6 border-b hover:bg-slate-50"><div className="flex justify-between mb-2"><span className="font-bold text-lg">{j.date} {j.description}</span><button onClick={()=>deleteEntry(j.id)} className="text-red-400 text-sm">刪除</button></div><table className="w-full text-sm"><tbody>{j.entries.map((e, idx) => (<tr key={idx}><td className="w-1/2">{e.name} <span className="text-slate-400 text-xs">({e.code})</span></td><td className="text-right w-1/4">{e.type==='debit' ? new Intl.NumberFormat().format(e.amount) : ''}</td><td className="text-right w-1/4">{e.type==='credit' ? new Intl.NumberFormat().format(e.amount) : ''}</td></tr>))}</tbody></table></div>))}</div></div>)}
+                        {activeTab === 'ledger' && (<div className="bg-white p-6 rounded-2xl shadow-sm border min-h-[500px] animate-fade-in"><div className="flex gap-4 mb-4 items-center"><label className="font-bold">科目：</label><select className="border p-2 rounded w-64" value={selectedAccount} onChange={e=>setSelectedAccount(e.target.value)}><option value="">請選擇...</option>{accounts.map(a => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}</select><label className="font-bold ml-4">月份：</label><input type="month" value={ledgerFilterMonth} onChange={e=>setLedgerFilterMonth(e.target.value)} className="border p-2 rounded" /></div><table className="w-full text-sm"><thead className="bg-slate-100 font-bold"><tr><th className="p-2 text-left">日期</th><th className="p-2 text-left">摘要</th><th className="p-2 text-right">借方</th><th className="p-2 text-right">貸方</th><th className="p-2 text-right">餘額</th></tr></thead><tbody>{ledgerData.map((row, idx) => (<tr key={idx} className={`border-b hover:bg-slate-50 ${row.isOpening ? 'bg-yellow-50 font-bold text-slate-500' : ''}`}><td className="p-2">{row.date}</td><td className="p-2">{row.desc}</td><td className="p-2 text-right">{row.debit>0?new Intl.NumberFormat().format(row.debit):'-'}</td><td className="p-2 text-right">{row.credit>0?new Intl.NumberFormat().format(row.credit):'-'}</td><td className="p-2 text-right font-bold text-blue-600">{new Intl.NumberFormat().format(row.balance)}</td></tr>))}</tbody></table></div>)}
+                        
+                        {activeTab === 'settings' && (
+                            <div className="animate-fade-in max-w-4xl">
+                                <h2 className="text-2xl font-bold text-slate-800 mb-6">⚙️ 系統設定與備份</h2>
+                                
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                                        <div className="flex items-center gap-3 mb-4 border-b pb-3">
+                                            <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600 text-xl">📥</div>
+                                            <div>
+                                                <h3 className="font-bold text-slate-800 text-lg">資料庫備份 (Export)</h3>
+                                                <p className="text-xs text-slate-500">將雲端所有資料下載至本地電腦</p>
+                                            </div>
+                                        </div>
+                                        <p className="text-sm text-slate-600 mb-6 h-12">建議您每月執行一次備份。備份檔案會包含所有員工資料、薪資紀錄與會計傳票，格式為標準 JSON 檔。</p>
+                                        <button onClick={handleBackup} className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold shadow-md transition flex justify-center items-center gap-2">
+                                            <span>💾</span> 一鍵下載備份檔
+                                        </button>
+                                    </div>
+
+                                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-red-200">
+                                        <div className="flex items-center gap-3 mb-4 border-b border-red-100 pb-3">
+                                            <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center text-red-600 text-xl">⚠️</div>
+                                            <div>
+                                                <h3 className="font-bold text-red-800 text-lg">資料庫還原 (Import)</h3>
+                                                <p className="text-xs text-red-500">從備份檔覆蓋現有資料 (危險操作)</p>
+                                            </div>
+                                        </div>
+                                        <p className="text-sm text-slate-600 mb-6 h-12">請上傳由本系統產生的 <code>.json</code> 備份檔。還原動作將會<strong className="text-red-600">覆蓋掉所有現有資料</strong>，請謹慎使用。</p>
+                                        
+                                        <input type="file" accept=".json" onChange={handleRestore} ref={fileInputRef} className="hidden" id="backup-upload" />
+                                        <label htmlFor="backup-upload" className="w-full py-3 bg-white border-2 border-red-500 text-red-600 hover:bg-red-50 cursor-pointer rounded-xl font-bold shadow-sm transition flex justify-center items-center gap-2 block text-center">
+                                            <span>📂</span> 選擇備份檔並還原
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                        
+                        {/* 薪資確認 Modal */}
+                        {showPayrollModal && (
+                            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+                                <div className="bg-white w-full max-w-4xl rounded-2xl shadow-2xl flex flex-col max-h-[90vh] animate-slide-up">
+                                    <div className="bg-slate-800 p-4 text-white font-bold flex justify-between items-center rounded-t-2xl">
+                                        <span>💰 {syncMonth} 薪資支付設定</span>
+                                        <button onClick={()=>setShowPayrollModal(false)} className="text-slate-400 hover:text-white">✕</button>
+                                    </div>
+                                    <div className="p-6 overflow-y-auto flex-1">
+                                        <div className="mb-4 flex gap-4">
+                                            <div className="flex-1 text-sm text-slate-500 bg-yellow-50 p-3 rounded border border-yellow-200">
+                                                💡 請勾選本月「領取現金」的員工，未勾選者將預設為「銀行轉帳」。
+                                            </div>
+                                            
+                                            <div className="flex gap-2">
+                                                <button onClick={generateBankFile} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded shadow text-sm flex items-center gap-2">
+                                                    <span>📥</span> 匯出合庫媒體檔
+                                                </button>
+                                                <button onClick={generateInterbankList} className="bg-orange-500 hover:bg-orange-600 text-white font-bold py-2 px-4 rounded shadow text-sm flex items-center gap-2">
+                                                    <span>📋</span> 匯出跨行清單
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <table className="w-full text-sm border-collapse">
+                                            <thead>
+                                                <tr className="bg-slate-100 text-slate-600 font-bold border-b">
+                                                    <th className="p-3 text-left">姓名</th>
+                                                    <th className="p-3 text-left">職位</th>
+                                                    <th className="p-3 text-left">銀行資訊</th>
+                                                    <th className="p-3 text-right">實領金額 (Net)</th>
+                                                    <th className="p-3 text-center w-32">支付方式</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100">
+                                                {payrollEmployees.map((emp, idx) => {
+                                                    const bankBadge = emp.bankCode === '006' 
+                                                        ? `<span class="text-xs bg-blue-100 text-blue-700 px-1 rounded">合庫</span>` 
+                                                        : `<span class="text-xs bg-orange-100 text-orange-700 px-1 rounded">${emp.bankCode}</span>`;
+                                                    
+                                                    return (
+                                                        <tr key={idx} className={`hover:bg-blue-50 ${emp.isCash ? 'bg-orange-50' : ''}`}>
+                                                            <td className="p-3 font-bold">{emp.name}</td>
+                                                            <td className="p-3"><span className={`px-2 py-1 rounded text-xs font-bold ${emp.role==='caregiver'?'bg-green-100 text-green-700':'bg-purple-100 text-purple-700'}`}>{emp.role === 'caregiver' ? '居服員' : '行政'}</span></td>
+                                                            <td className="p-3 text-slate-500 font-mono text-xs">
+                                                                {emp.bankAccount ? <span dangerouslySetInnerHTML={{__html: `${bankBadge} ${emp.bankAccount}`}}></span> : <span class="text-red-300">未設定</span>}
+                                                            </td>
+                                                            <td className="p-3 text-right font-mono font-bold text-lg">${new Intl.NumberFormat().format(emp.net)}</td>
+                                                            <td className="p-3 text-center cursor-pointer" onClick={()=>togglePaymentMethod(idx)}>
+                                                                <div className={`border-2 rounded-lg px-2 py-1 text-xs font-bold transition select-none ${emp.isCash ? 'border-orange-500 bg-orange-100 text-orange-700' : 'border-slate-200 bg-white text-slate-400'}`}>{emp.isCash ? '💵 現金' : '🏦 轉帳'}</div>
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </tbody>
+                                            <tfoot className="bg-slate-50 font-bold">
+                                                <tr>
+                                                    <td colSpan="3" className="p-3 text-right">總計：</td>
+                                                    <td className="p-3 text-right border-t-2 border-slate-300">${new Intl.NumberFormat().format(payrollEmployees.reduce((s,e)=>s+e.net,0))}</td>
+                                                    <td className="p-3 text-center text-xs text-slate-500">(現金: ${new Intl.NumberFormat().format(payrollEmployees.filter(e=>e.isCash).reduce((s,e)=>s+e.net,0))})</td>
+                                                </tr>
+                                            </tfoot>
+                                        </table>
+                                    </div>
+                                    <div className="p-4 border-t bg-slate-50 flex justify-end gap-2 rounded-b-2xl">
+                                        <button onClick={()=>setShowPayrollModal(false)} className="px-6 py-2 text-slate-500 font-bold hover:bg-slate-100 rounded">取消</button>
+                                        <button onClick={confirmPayrollSync} className="px-6 py-2 bg-emerald-600 text-white rounded font-bold hover:bg-emerald-700 shadow-lg flex items-center gap-2"><span>✅ 確認拋轉傳票</span></button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {showModal && (<div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm"><div className="bg-white w-full max-w-3xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"><div className="bg-slate-800 p-4 text-white font-bold flex justify-between items-center"><span>新增傳票 (Manual Entry)</span><button onClick={()=>setShowModal(false)} className="text-slate-400 hover:text-white">✕</button></div><div className="p-6 overflow-y-auto flex-1"><div className="flex gap-4 mb-4"><div className="w-1/3"><label className="block text-xs font-bold text-slate-500 mb-1">日期</label><input type="date" value={entryDate} onChange={e=>setEntryDate(e.target.value)} className="w-full border rounded p-2" /></div><div className="w-2/3"><label className="block text-xs font-bold text-slate-500 mb-1">摘要說明</label><input type="text" value={entryDesc} onChange={e=>setEntryDesc(e.target.value)} className="w-full border rounded p-2" placeholder="例如: 開帳餘額、現金調整" /></div></div><table className="w-full text-sm mb-4"><thead className="bg-slate-50 text-slate-500 font-bold text-xs"><tr><th className="p-2 text-left">會計科目</th><th className="p-2 text-right">借方 (Debit)</th><th className="p-2 text-right">貸方 (Credit)</th><th className="p-2"></th></tr></thead><tbody>{entryRows.map((row, idx) => (<tr key={idx} className="border-b"><td className="p-2"><select className="w-full border rounded p-2 font-mono" value={row.account} onChange={e=>handleRowChange(idx, 'account', e.target.value)}><option value="">請選擇...</option>{accounts.map(a => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}</select></td><td className="p-2"><input type="number" className="w-full border rounded p-2 text-right" value={row.debit || ''} onChange={e=>handleRowChange(idx, 'debit', e.target.value)} /></td><td className="p-2"><input type="number" className="w-full border rounded p-2 text-right" value={row.credit || ''} onChange={e=>handleRowChange(idx, 'credit', e.target.value)} /></td><td className="p-2 text-center"><button onClick={()=>removeRow(idx)} className="text-red-400 hover:text-red-600 font-bold">×</button></td></tr>))}</tbody><tfoot><tr className="font-bold text-slate-700 bg-slate-50"><td className="p-2 text-right">合計：</td><td className={`p-2 text-right ${entryRows.reduce((s,r)=>s+Number(r.debit),0)!==entryRows.reduce((s,r)=>s+Number(r.credit),0)?'text-red-500':'text-green-600'}`}>{new Intl.NumberFormat().format(entryRows.reduce((s,r)=>s+Number(r.debit),0))}</td><td className={`p-2 text-right ${entryRows.reduce((s,r)=>s+Number(r.debit),0)!==entryRows.reduce((s,r)=>s+Number(r.credit),0)?'text-red-500':'text-green-600'}`}>{new Intl.NumberFormat().format(entryRows.reduce((s,r)=>s+Number(r.credit),0))}</td><td></td></tr></tfoot></table><button onClick={addRow} className="text-blue-600 text-sm font-bold hover:underline">+ 新增一行</button></div><div className="p-4 border-t bg-slate-50 flex justify-end gap-2"><button onClick={()=>setShowModal(false)} className="px-4 py-2 text-slate-500 font-bold">取消</button><button onClick={saveManualEntry} className="px-6 py-2 bg-blue-600 text-white rounded font-bold hover:bg-blue-700 shadow">確認儲存</button></div></div></div>)}
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<AccountingApp />);
+    </script>
+</body>
+</html>

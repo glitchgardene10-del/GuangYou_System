@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>光祐居服員考核系統 (v7.1 過濾版)</title>
+    
+    <script src="auth-guard.js"></script>
+    <script type="module" src="config.js"></script>
+
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <style>
+        body { font-family: "Microsoft JhengHei", "Heiti TC", sans-serif; }
+        input[type=number]::-webkit-inner-spin-button, 
+        input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+        .saving-indicator { position: fixed; bottom: 10px; right: 10px; font-size: 12px; color: #64748b; }
+    </style>
+
+    <script type="module">
+        import { doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+        const checkInit = setInterval(() => {
+            if (window.db && window.auth) {
+                clearInterval(checkInit);
+                const DOC_REF = doc(window.db, "caregiver_system", "main_data");
+
+                window.FirebaseAPI = {
+                    subscribe: (onUpdate) => {
+                        let unsubscribeSnapshot = null;
+                        const unsubscribeAuth = window.auth.onAuthStateChanged((user) => {
+                            if (user) {
+                                unsubscribeSnapshot = onSnapshot(DOC_REF, (docSnap) => {
+                                    if (docSnap.exists()) {
+                                        onUpdate(docSnap.data());
+                                    } else {
+                                        const initialData = { staffList: [], allData: {} };
+                                        setDoc(DOC_REF, initialData);
+                                        onUpdate(initialData);
+                                    }
+                                }, (error) => {
+                                    console.warn("讀取資料受限", error);
+                                });
+                            }
+                        });
+                        return () => {
+                            unsubscribeAuth();
+                            if (unsubscribeSnapshot) unsubscribeSnapshot();
+                        };
+                    },
+                    saveAll: async (staffList, allData, userEmail) => {
+                        try {
+                            await setDoc(DOC_REF, { 
+                                staffList, 
+                                allData,
+                                lastModifiedBy: userEmail,
+                                lastModifiedAt: new Date().toISOString()
+                            }, { merge: true });
+                            return true;
+                        } catch (e) {
+                            console.error("儲存失敗:", e);
+                            return false;
+                        }
+                    }
+                };
+            }
+        }, 100);
+    </script>
+</head>
+<body class="bg-slate-50 text-slate-900">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const Icons = {
+            Users: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
+            Calculator: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><rect width="16" height="20" x="4" y="2" rx="2"/><line x1="8" x2="16" y1="6" y2="6"/><line x1="16" x2="16" y1="14" y2="18"/><path d="M16 10h.01"/><path d="M12 10h.01"/><path d="M8 10h.01"/><path d="M12 14h.01"/><path d="M8 14h.01"/><path d="M12 18h.01"/><path d="M8 18h.01"/></svg>,
+            Plus: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M5 12h14"/><path d="M12 5v14"/></svg>,
+            Trash2: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>,
+            Trophy: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>,
+            AlertCircle: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>,
+            Calendar: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>,
+            Edit: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>,
+            Save: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>,
+            Download: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>,
+            Upload: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>,
+            BarChart: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><line x1="12" x2="12" y1="20" y2="10"/><line x1="18" x2="18" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="16"/></svg>,
+            Cloud: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M17.5 19c0-1.7-1.3-3-3-3h-1.1c-.2-2.3-2.1-4-4-4-2.6 0-4.6 2.1-4.6 4.6 0 .3.1.6.2.9C2.7 17.8 1.5 19.5 1.5 21.5c0 2.5 2 4.5 4.5 4.5h11.5c2.5 0 4.5-2 4.5-4.5s-2-4.5-4.5-4.5z"/></svg>,
+            History: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>,
+            Lock: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>,
+            LogOut: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>,
+            Filter: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+        };
+
+        const Card = ({ className, children }) => <div className={`rounded-lg border bg-white text-slate-950 shadow-sm ${className}`}>{children}</div>;
+        const CardHeader = ({ className, children }) => <div className={`flex flex-col space-y-1.5 p-6 ${className}`}>{children}</div>;
+        const CardTitle = ({ className, children }) => <h3 className={`text-xl font-semibold leading-none tracking-tight ${className}`}>{children}</h3>;
+        const CardContent = ({ className, children }) => <div className={`p-6 pt-0 ${className}`}>{children}</div>;
+        const Button = ({ className, variant = "default", size = "default", onClick, children, disabled, title, type = "button" }) => {
+            const baseStyles = "inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50";
+            const variants = {
+                default: "bg-blue-600 text-white hover:bg-blue-700",
+                outline: "border border-input bg-background hover:bg-slate-100 hover:text-slate-900",
+                secondary: "bg-slate-600 text-white hover:bg-slate-700",
+                destructive: "bg-red-500 text-white hover:bg-red-600",
+                ghost: "hover:bg-slate-100 hover:text-slate-900"
+            };
+            const sizes = { default: "h-10 px-4 py-2", sm: "h-8 rounded-md px-3 text-xs", icon: "h-10 w-10" };
+            return <button type={type} disabled={disabled} className={`${baseStyles} ${variants[variant] || variants.default} ${sizes[size] || sizes.default} ${className}`} onClick={onClick} title={title}>{children}</button>;
+        };
+        const Input = ({ className, ...props }) => (
+            <input className={`flex h-9 w-full rounded-md border border-slate-200 bg-white px-3 py-1 text-sm ring-offset-white file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${className}`} {...props} />
+        );
+        const Badge = ({ variant = "default", className, children }) => {
+            const variants = {
+                default: "bg-blue-600 text-white",
+                warning: "bg-amber-500 text-white",
+                destructive: "bg-red-500 text-white"
+            };
+            return <div className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold ${variants[variant]} ${className}`}>{children}</div>;
+        };
+        const Modal = ({ isOpen, onClose, title, children }) => {
+            if (!isOpen) return null;
+            return (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+                    <div className="bg-white rounded-lg shadow-lg w-full max-w-md overflow-hidden">
+                        <div className="px-4 py-3 border-b flex justify-between items-center bg-slate-50">
+                            <h3 className="font-bold">{title}</h3>
+                            <button onClick={onClose} className="text-slate-500 hover:text-slate-700">&times;</button>
+                        </div>
+                        <div className="p-4">{children}</div>
+                    </div>
+                </div>
+            );
+        };
+
+        const QUARTERLY_STRUCTURE = [
+            { id: 'section1', title: '一、主動性 (30%)', weight: 30, maxRawScore: 35, items: [{ id: '1.1', text: '1.1 期限內繳交服務卡、服務紀錄單' }, { id: '1.2', text: '1.2 每月參加團督會議' }, { id: '1.3', text: '1.3 每月參加在職教育訓練' }, { id: '1.4', text: '1.4 積極提升自我專業能力' }, { id: '1.5', text: '1.5 主動且及時向督導反映個案問題' }, { id: '1.6', text: '1.6 回報特殊事件的積極性' }, { id: '1.7', text: '1.7 主動繳交服務相關費用' }] },
+            { id: 'section2', title: '二、工作能力 (40%)', weight: 40, maxRawScore: 25, items: [{ id: '2.1', text: '2.1 服務時間準確，無遲到早退' }, { id: '2.2', text: '2.2 APP定位狀況良好' }, { id: '2.3', text: '2.3 工作內容執行正確' }, { id: '2.4', text: '2.4 照顧技巧熟練度與正確性' }, { id: '2.5', text: '2.5 意外事件應變能力' }] },
+            { id: 'section3', title: '三、紀錄能力 (15%)', weight: 15, maxRawScore: 15, items: [{ id: '3.1', text: '3.1 服務卡書寫清晰完整' }, { id: '3.2', text: '3.2 紀錄單書寫具體詳實' }, { id: '3.3', text: '3.3 修正錯誤表單時效性' }] },
+            { id: 'section4', title: '四、工作態度 (15%)', weight: 15, maxRawScore: 40, items: [{ id: '4.1', text: '4.1 服務態度佳，互動良好' }, { id: '4.2', text: '4.2 謹守工作倫理與隱私' }, { id: '4.3', text: '4.3 與機構同事保持合作' }, { id: '4.4', text: '4.4 服從督導及機構指導' }, { id: '4.5', text: '4.5 維護機構形象，言行得體' }, { id: '4.6', text: '4.6 情緒管理適當' }, { id: '4.7', text: '4.7 服裝儀容端正' }, { id: '4.8', text: '4.8 配合公司排班規定' }] }
+        ];
+
+        const ANNUAL_STRUCTURE = [
+            { id: 'annual_prof', title: '專業與工作態度考核 (48%)', items: [{ id: 'a.1', text: '1. 具備專業知識與照護技巧，錯誤率低', max: 8 }, { id: 'a.2', text: '2. 工作效率高，時效內完成業務', max: 8 }, { id: 'a.3', text: '3. 配合度高，支援交辦事項', max: 8 }, { id: 'a.4', text: '4. 盡心服務，不抱怨，遵守保密隱私', max: 8 }, { id: 'a.5', text: '5. 提出建設性建議，非無故抱怨', max: 8 }, { id: 'a.6', text: '6. 工作負責勤懇，確實遵守公司規定', max: 8 }] },
+            { id: 'annual_loyalty', title: '向心力與個人素養考核 (37%)', items: [{ id: 'b.1', text: '1. 謙遜有禮，落實職場倫理', max: 7 }, { id: 'b.2', text: '2. 對機構向心力佳，維護信譽', max: 7 }, { id: 'b.3', text: '3. 樂於分享工作技巧，不藏私', max: 8 }, { id: 'b.4', text: '4. 勇於承擔錯誤並修正，不說謊', max: 8 }, { id: 'b.5', text: '5. 以機構最大利益為考量，無違法風險', max: 7 }] }
+        ];
+
+        const getRecordKey = (sId, year, q) => `${sId}_${year}_${q}`;
+
+        const calculateQuarterly = (record) => {
+            if (!record) return { total: 0, details: [], bonus: 0, penalty: 0 };
+            if (record.manualScore !== undefined && record.manualScore !== '' && record.manualScore !== null) {
+                return { total: parseFloat(record.manualScore).toFixed(2), details: [{ title: '歷史成績直接補登', raw: '-', weighted: parseFloat(record.manualScore).toFixed(2) }], bonusData: {}, isNewHire: record.isNewHire, isManual: true };
+            }
+            const scores = record.scores || {};
+            const bonusData = record.bonus || {};
+            let totalWeighted = 0, details = [];
+            QUARTERLY_STRUCTURE.forEach(section => {
+                let rawSum = 0;
+                section.items.forEach(item => {
+                    const s = scores[item.id] || {};
+                    rawSum += ((s.self||0)*0.05) + ((s.sup||0)*0.60) + ((s.dir||0)*0.35);
+                });
+                const weighted = (rawSum / section.maxRawScore) * section.weight;
+                totalWeighted += weighted;
+                details.push({ title: section.title, raw: rawSum.toFixed(2), weighted: weighted.toFixed(2) });
+            });
+            const bNewStaff = Math.min((bonusData.newStaff||0)*1, 2);
+            const bNewCase = Math.min((bonusData.newCase||0)*0.5, 2);
+            const bInnovation = Math.min((bonusData.innovation||0), 2);
+            const pAudit = (bonusData.auditError||0)*3;
+            const pComplaint = (bonusData.complaint||0)*2;
+            const final = totalWeighted + bNewStaff + bNewCase + bInnovation - pAudit - pComplaint;
+            return { total: final.toFixed(2), details, bonusData, isNewHire: record.isNewHire, isManual: false };
+        };
+
+        const calculateAnnual = (sId, year, allData) => {
+            let qSum = 0, qCount = 0, qDetails = [];
+            ['Q1', 'Q2', 'Q3', 'Q4'].forEach(q => {
+                const key = getRecordKey(sId, year, q);
+                const record = allData[key];
+                if (record && !record.isNewHire) {
+                    const res = calculateQuarterly(record);
+                    const val = parseFloat(res.total);
+                    if (!isNaN(val) && val > 0) { qSum += val; qCount++; qDetails.push({ q, val }); }
+                } else if (record && record.isNewHire) { qDetails.push({ q, val: '新進(不計)' }); } else { qDetails.push({ q, val: '-' }); }
+            });
+            const qAvg = qCount > 0 ? (qSum / qCount) : 0;
+            const annualFromQuarter = qAvg * 0.15;
+            
+            const annualKey = getRecordKey(sId, year, 'ANNUAL');
+            const record = allData[annualKey] || {};
+            const scores = record.scores || {};
+            const bonus = record.bonus || {};
+            let totalMax = 0, sumSelf = 0, sumSup = 0, sumDir = 0;
+            ANNUAL_STRUCTURE.forEach(sec => {
+                sec.items.forEach(item => {
+                    totalMax += item.max;
+                    const s = scores[item.id] || {};
+                    sumSelf += parseFloat(s.self || 0);
+                    sumSup += parseFloat(s.sup || 0);
+                    sumDir += parseFloat(s.dir || 0);
+                });
+            });
+            const scoreSelf = totalMax > 0 ? (sumSelf / totalMax) * 10 : 0;
+            const scoreSup = totalMax > 0 ? (sumSup / totalMax) * 50 : 0;
+            const scoreDir = totalMax > 0 ? (sumDir / totalMax) * 25 : 0;
+            const annualAssessmentScore = scoreSelf + scoreSup + scoreDir;
+            
+            const lateCount = (bonus.late || 0);
+            const forgotCount = (bonus.forgot || 0);
+            const gpsCount = (bonus.gps || 0);
+            
+            const attDeduct = 
+                (Math.floor(lateCount / 3) * 0.5) +       
+                ((bonus.absent || 0) * 1) +               
+                ((bonus.leave || 0) * 0.2) +              
+                (Math.floor(forgotCount / 2) * 0.5) +     
+                (Math.floor(gpsCount / 5) * 0.5);         
+            
+            const rewardsScore = 
+                ((bonus.commendation1 || 0) * 0.3) +      
+                ((bonus.commendation2 || 0) * 1) +        
+                ((bonus.commendation3 || 0) * 3) -        
+                ((bonus.warning || 0) * 0.3) -            
+                ((bonus.minor || 0) * 1) -                
+                ((bonus.major || 0) * 3);                 
+
+            const final = annualFromQuarter + annualAssessmentScore + rewardsScore - attDeduct;
+            return { qDetails, qAvg: qAvg.toFixed(2), annualFromQuarter: annualFromQuarter.toFixed(2), scoreSelf: scoreSelf.toFixed(2), scoreSup: scoreSup.toFixed(2), scoreDir: scoreDir.toFixed(2), annualAssessmentScore: annualAssessmentScore.toFixed(2), attDeduct: attDeduct.toFixed(2), rewardsScore: rewardsScore.toFixed(2), final: final.toFixed(2), bonus };
+        };
+
+        const RankingView = ({ staffList, allData, currentYear, currentQuarter }) => {
+            const [data, setData] = useState([]);
+            useEffect(() => {
+                if (currentQuarter === 'ANNUAL') return;
+                const calculated = staffList.map(staff => {
+                    const key = getRecordKey(staff.id, currentYear, currentQuarter);
+                    const record = allData[key];
+                    if (!record) return { ...staff, score: 0, isNewHire: false };
+                    const res = calculateQuarterly(record);
+                    return { ...staff, score: parseFloat(res.total), isNewHire: record.isNewHire };
+                }).filter(s => s.score > 0);
+                calculated.sort((a, b) => b.score - a.score);
+                const totalActiveStaff = calculated.length;
+                const top20Count = Math.ceil(totalActiveStaff * 0.2);
+                const finalData = calculated.map((item, index) => {
+                    const rank = index + 1;
+                    const score = item.score;
+                    let baseBonus = 0, extraBonus = 0, rankBonus = 0;
+                    if (score >= 85) baseBonus = 1500; else if (score >= 75) baseBonus = 1000; else if (score >= 70) baseBonus = 500;
+                    if (score > 90) extraBonus += 500; if (score > 95) extraBonus += 500;
+                    if (rank <= top20Count) rankBonus = 500;
+                    return { ...item, rank, baseBonus, extraBonus, rankBonus, totalBonus: baseBonus + extraBonus + rankBonus };
+                });
+                setData(finalData);
+            }, [staffList, allData, currentYear, currentQuarter]);
+
+            if (currentQuarter === 'ANNUAL') return <div className="p-8 text-center text-slate-500">年度總評請使用個別考核頁面查看詳細報表，此功能僅支援季度獎金計算。</div>;
+            return (
+                <div className="space-y-6 animate-in fade-in">
+                    <Card><CardHeader className="flex flex-row items-center justify-between pb-2 bg-slate-50 border-b">
+                        <div><CardTitle className="text-xl font-bold flex items-center gap-2"><Icons.BarChart className="text-blue-600"/> {currentYear}年 {currentQuarter} 季度獎金排名表</CardTitle><p className="text-sm text-slate-500 mt-1">總計 {data.length} 位受評人員，前 20% (名次 &le; {Math.ceil(data.length * 0.2)}) 享有排名獎金</p></div>
+                        <div className="text-right"><div className="text-xs text-slate-500">預估發放總獎金</div><div className="text-2xl font-bold font-mono text-green-600">${data.reduce((acc, curr) => acc + curr.totalBonus, 0).toLocaleString()}</div></div>
+                    </CardHeader><CardContent className="p-0"><div className="overflow-x-auto"><table className="w-full text-sm text-left"><thead className="bg-slate-100 text-slate-600 uppercase font-bold text-xs"><tr><th className="px-4 py-3 w-16 text-center">排名</th><th className="px-4 py-3">姓名</th><th className="px-4 py-3 text-right">總分</th><th className="px-4 py-3 text-right">級距獎金</th><th className="px-4 py-3 text-right">高分加給</th><th className="px-4 py-3 text-right">排名加給</th><th className="px-4 py-3 text-right text-green-700 bg-green-50">總獎金</th></tr></thead><tbody className="divide-y divide-slate-100">{data.map(row => (<tr key={row.id} className="hover:bg-slate-50"><td className="px-4 py-3 text-center font-bold text-slate-500">{row.rank === 1 ? '🥇' : row.rank === 2 ? '🥈' : row.rank === 3 ? '🥉' : row.rank}</td><td className="px-4 py-3 font-medium">{row.name}{row.isNewHire && <Badge variant="warning" className="ml-2">新進</Badge>}</td><td className="px-4 py-3 text-right font-mono font-bold">{row.score.toFixed(2)}</td><td className="px-4 py-3 text-right text-slate-500">${row.baseBonus}</td><td className="px-4 py-3 text-right text-slate-500">{row.extraBonus > 0 ? `+$${row.extraBonus}` : '-'}</td><td className="px-4 py-3 text-right text-slate-500">{row.rankBonus > 0 ? <span className="text-blue-600 font-bold">+$500</span> : '-'}</td><td className="px-4 py-3 text-right font-bold text-green-700 bg-green-50">${row.totalBonus.toLocaleString()}</td></tr>))}</tbody></table></div></CardContent></Card>
+                </div>
+            );
+        };
+
+        function App() {
+            const [user, setUser] = useState(null);
+            const [authLoading, setAuthLoading] = useState(true);
+            const [viewMode, setViewMode] = useState('individual');
+            const [currentYear, setCurrentYear] = useState(114);
+            const [currentQuarter, setCurrentQuarter] = useState('Q1');
+            const [staffList, setStaffList] = useState([]);
+            const [selectedStaffId, setSelectedStaffId] = useState(null);
+            const [allData, setAllData] = useState({});
+            const [isStaffModalOpen, setIsStaffModalOpen] = useState(false);
+            const [editingStaff, setEditingStaff] = useState(null);
+            const fileInputRef = useRef(null);
+            const [dataLoading, setDataLoading] = useState(false);
+            const [saving, setSaving] = useState(false);
+            const [isSystemReady, setIsSystemReady] = useState(false);
+            
+            // ★ 新增：列表過濾狀態
+            const [showOnlyActive, setShowOnlyActive] = useState(true);
+
+            useEffect(() => {
+                const timer = setInterval(() => {
+                    if (window.db && window.auth && window.FirebaseAPI) {
+                        clearInterval(timer);
+                        setIsSystemReady(true);
+                    }
+                }, 100);
+                return () => clearInterval(timer);
+            }, []);
+
+            useEffect(() => {
+                if (!isSystemReady) return;
+
+                const session = sessionStorage.getItem('kuangyou_user');
+                if (!session) {
+                    alert("⛔ 請由管理系統登入");
+                    window.top.location.href = 'index.html';
+                    return;
+                }
+                const currentUser = JSON.parse(session);
+                setUser(currentUser);
+                setAuthLoading(false);
+
+                setDataLoading(true);
+                const unsubscribe = window.FirebaseAPI.subscribe((data) => {
+                    if (data) { 
+                        // 對員工名單進行排序 (可選，讓顯示更有序)
+                        const sList = data.staffList || [];
+                        sList.sort((a,b) => a.name.localeCompare(b.name));
+                        setStaffList(sList); 
+                        setAllData(data.allData || {}); 
+                    }
+                    setDataLoading(false);
+                });
+                return () => { if(unsubscribe) unsubscribe(); };
+            }, [isSystemReady]);
+
+            // 自動選取第一位可見員工
+            useEffect(() => {
+                if (user && !selectedStaffId && staffList.length > 0 && !dataLoading) {
+                    const firstActive = staffList.find(s => getStaffStatus(s, currentYear, currentQuarter) !== 'resigned');
+                    if(firstActive) setSelectedStaffId(firstActive.id);
+                    else setSelectedStaffId(staffList[0].id);
+                }
+            }, [staffList, dataLoading, selectedStaffId, user, currentYear, currentQuarter]);
+
+            const handleLogout = () => {
+                if(confirm("確定要離開考核系統嗎？")) {
+                    window.top.location.href = 'index.html'; 
+                }
+            };
+
+            const saveToFirebase = async (newList, newData) => {
+                if (!user) return;
+                setSaving(true);
+                await window.FirebaseAPI.saveAll(newList, newData, user.email || user.name);
+                setSaving(false);
+            };
+
+            const getStaffStatus = (staff, year, quarter) => {
+                if (!staff.resignDate) return 'active';
+                const [rY, rM] = staff.resignDate.split('-').map(Number);
+                let qStartMonth = 1;
+                if (quarter === 'Q2') qStartMonth = 4;
+                if (quarter === 'Q3') qStartMonth = 7;
+                if (quarter === 'Q4' || quarter === 'ANNUAL') qStartMonth = 10;
+                if (rY < year) return 'resigned';
+                if (rY === year && rM < qStartMonth) return 'resigned';
+                return 'active';
+            };
+
+            const handleSaveStaff = (e) => {
+                e.preventDefault();
+                const formData = new FormData(e.target);
+                const newStaff = { id: editingStaff?.id || Date.now().toString(), name: formData.get('name').trim(), onboardDate: formData.get('onboardDate'), resignDate: formData.get('resignDate') };
+                let newList = editingStaff ? staffList.map(s => s.id === editingStaff.id ? newStaff : s) : [...staffList, newStaff];
+                if (!editingStaff) setSelectedStaffId(newStaff.id);
+                setStaffList(newList);
+                saveToFirebase(newList, allData);
+                setIsStaffModalOpen(false);
+                setEditingStaff(null);
+            };
+
+            const handleDeleteStaff = (id) => {
+                if(confirm('確定刪除此員工資料？(歷史考核紀錄將會一併無法顯示)')) {
+                    const newList = staffList.filter(s => s.id !== id);
+                    setStaffList(newList);
+                    if (selectedStaffId === id) setSelectedStaffId(null);
+                    saveToFirebase(newList, allData);
+                }
+            };
+
+            const updateAndSave = (newData) => { setAllData(newData); saveToFirebase(staffList, newData); };
+            const updateRecord = (key, field, value) => updateAndSave({ ...allData, [key]: { ...allData[key], [field]: value } });
+            const updateBonus = (key, field, val) => updateAndSave({ ...allData, [key]: { ...allData[key], bonus: { ...allData[key]?.bonus, [field]: val === '' ? '' : parseFloat(val) } } });
+            const updateScore = (key, itemId, role, val) => {
+                let num = val === '' ? '' : parseFloat(val);
+                if (num !== '' && num > 100) num = 100;
+                updateAndSave({ ...allData, [key]: { ...allData[key], scores: { ...allData[key]?.scores, [itemId]: { ...allData[key]?.scores?.[itemId], [role]: num } } } });
+            };
+
+            const handleFileUpload = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (evt) => {
+                    try {
+                        const parsed = JSON.parse(evt.target.result);
+                        if (parsed.staffList && parsed.allData && confirm("匯入將覆蓋雲端資料，確定？")) {
+                            setStaffList(parsed.staffList);
+                            setAllData(parsed.allData);
+                            saveToFirebase(parsed.staffList, parsed.allData);
+                        }
+                    } catch (err) { alert("讀取失敗"); }
+                };
+                reader.readAsText(file);
+                e.target.value = null;
+            };
+
+            const downloadData = () => {
+                const blob = new Blob([JSON.stringify({ staffList, allData, version: "v5_auth" }, null, 2)], { type: "application/json" });
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(blob);
+                a.download = `考核系統備份_${new Date().toISOString().slice(0,10)}.json`;
+                document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            };
+
+            const currentStaff = staffList.find(s => s.id === selectedStaffId);
+            const recordKey = selectedStaffId ? getRecordKey(selectedStaffId, currentYear, currentQuarter) : null;
+            const currentRecord = allData[recordKey] || {};
+
+            if (!isSystemReady || authLoading) return <div className="h-screen w-full flex items-center justify-center bg-slate-900 text-white font-bold animate-pulse">系統連線中...</div>;
+            if (dataLoading) return <div className="h-screen w-full flex items-center justify-center bg-slate-50 text-slate-500 font-bold animate-pulse">正在同步雲端資料...</div>;
+
+            // ★ 新增：計算左側要顯示的名單
+            const displayStaffList = staffList.filter(staff => {
+                if (showOnlyActive) {
+                    return getStaffStatus(staff, currentYear, currentQuarter) !== 'resigned';
+                }
+                return true;
+            });
+
+            return (
+                <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
+                    <header className="bg-white border-b px-6 py-4 flex items-center justify-between sticky top-0 z-20 shadow-sm">
+                        <div className="flex items-center gap-3">
+                            <div className="bg-blue-600 p-2 rounded-lg"><Icons.Cloud className="h-5 w-5 text-white" /></div>
+                            <div>
+                                <h1 className="text-xl font-bold text-slate-800 hidden md:block">光祐居服員考核系統 <span className="text-xs font-normal text-slate-500 ml-2 bg-slate-100 px-2 py-0.5 rounded-full">v7.1 ERP版</span></h1>
+                                <p className="text-xs text-slate-400 md:hidden">v7.1 ERP</p>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-4">
+                            <div className="hidden md:flex items-center text-xs text-slate-500 border-r pr-4 mr-2">
+                                <span className="w-2 h-2 rounded-full bg-green-500 mr-2"></span>
+                                {user.name} ({user.role === 'super_admin' ? '總管理員' : '行政人員'})
+                            </div>
+                            <div className="flex bg-slate-100 rounded p-1 mr-2">
+                                <button onClick={() => setViewMode('individual')} className={`px-3 py-1 text-sm rounded transition-all flex items-center gap-1 ${viewMode==='individual' ? 'bg-white shadow text-blue-700 font-bold' : 'text-slate-500'}`}><Icons.Users className="w-4 h-4"/> 個別</button>
+                                <button onClick={() => setViewMode('ranking')} className={`px-3 py-1 text-sm rounded transition-all flex items-center gap-1 ${viewMode==='ranking' ? 'bg-white shadow text-blue-700 font-bold' : 'text-slate-500'}`}><Icons.BarChart className="w-4 h-4"/> 排名</button>
+                            </div>
+                            <div className="flex gap-2">
+                                <select value={currentYear} onChange={(e) => setCurrentYear(Number(e.target.value))} className="h-9 rounded border border-slate-300 px-2 text-sm font-bold bg-slate-50"><option value={113}>113年</option><option value={114}>114年</option><option value={115}>115年</option></select>
+                                <select value={currentQuarter} onChange={(e) => setCurrentQuarter(e.target.value)} className="h-9 rounded border border-slate-300 px-2 text-sm font-bold bg-slate-50"><option value="Q1">Q1</option><option value="Q2">Q2</option><option value="Q3">Q3</option><option value="Q4">Q4</option><option value="ANNUAL">年度</option></select>
+                            </div>
+                            <Button variant="secondary" size="icon" onClick={handleLogout} title="離開系統"><Icons.LogOut className="w-4 h-4"/></Button>
+                        </div>
+                    </header>
+
+                    <div className="flex flex-1 overflow-hidden h-[calc(100vh-73px)]">
+                        {viewMode === 'individual' && (
+                            <aside className="w-72 bg-white border-r flex flex-col h-full overflow-hidden shrink-0">
+                                <div className="p-4 border-b flex-shrink-0 flex flex-col gap-2">
+                                    <Button onClick={() => { setEditingStaff(null); setIsStaffModalOpen(true); }} className="w-full"><Icons.Plus className="mr-2 h-4 w-4" /> 新增名單</Button>
+                                    
+                                    {/* ★ 新增：顯示篩選開關 */}
+                                    <div className="flex items-center justify-between px-1 mt-2">
+                                        <label className="text-xs font-bold text-slate-500 flex items-center gap-1 cursor-pointer">
+                                            <input type="checkbox" checked={showOnlyActive} onChange={(e)=>setShowOnlyActive(e.target.checked)} className="w-3 h-3 text-blue-600 rounded border-gray-300 focus:ring-blue-500" />
+                                            只顯示考核期內在職
+                                        </label>
+                                        <span className="text-xs text-slate-400">共 {displayStaffList.length} 人</span>
+                                    </div>
+                                </div>
+                                <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                                    {displayStaffList.map(staff => {
+                                        const st = getStaffStatus(staff, currentYear, currentQuarter);
+                                        return (
+                                            <div key={staff.id} onClick={() => st!=='resigned' && setSelectedStaffId(staff.id)} className={`group flex items-center justify-between p-3 rounded-md cursor-pointer transition-all border border-transparent ${selectedStaffId === staff.id ? 'bg-blue-50 border-blue-200 shadow-sm' : 'hover:bg-slate-50'} ${st==='resigned' ? 'opacity-50 grayscale cursor-not-allowed bg-slate-50' : ''}`}>
+                                                <div className="flex items-center gap-3 overflow-hidden">
+                                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${selectedStaffId === staff.id ? 'bg-blue-200 text-blue-700' : 'bg-slate-200 text-slate-500'}`}>{staff.name.charAt(0)}</div>
+                                                    <div className="min-w-0"><div className="font-medium truncate text-slate-900">{staff.name}</div>{st==='resigned' && <Badge variant="destructive" className="mt-0.5 scale-90 origin-left">已離職</Badge>}</div>
+                                                </div>
+                                                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={(e) => { e.stopPropagation(); setEditingStaff(staff); setIsStaffModalOpen(true); }} className="p-1 hover:bg-slate-200 rounded text-slate-500"><Icons.Edit className="h-4 w-4"/></button><button onClick={(e) => { e.stopPropagation(); handleDeleteStaff(staff.id); }} className="p-1 hover:bg-red-100 rounded text-red-500"><Icons.Trash2 className="h-4 w-4"/></button></div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                                <div className="p-4 border-t bg-slate-50 flex gap-2">
+                                    <Button onClick={downloadData} variant="secondary" className="flex-1 text-xs" title="下載備份"><Icons.Download className="w-4 h-4 mr-1"/> 備份</Button>
+                                    <Button onClick={() => fileInputRef.current.click()} variant="outline" className="flex-1 text-xs" title="匯入舊檔"><Icons.Upload className="w-4 h-4 mr-1"/> 匯入</Button>
+                                    <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".json"/>
+                                </div>
+                            </aside>
+                        )}
+                        <main className="flex-1 overflow-y-auto p-6 bg-slate-50">
+                            {viewMode === 'individual' ? (
+                                selectedStaffId ? (
+                                    <div className="max-w-5xl mx-auto">
+                                        <div className="mb-6 flex items-center justify-between">
+                                            <div><h2 className="text-2xl font-bold text-slate-800">{staffList.find(s=>s.id===selectedStaffId)?.name}</h2><p className="text-slate-500 text-sm flex items-center gap-2"><Icons.Calendar className="h-4 w-4"/> {currentYear}年 {currentQuarter==='ANNUAL'?'年度考核':currentQuarter+' 季考核'}</p></div>
+                                        </div>
+                                        {currentQuarter === 'ANNUAL' ? 
+                                            (() => {
+                                                const res = calculateAnnual(selectedStaffId, currentYear, allData);
+                                                const scores = currentRecord.scores || {};
+                                                const bonus = currentRecord.bonus || {};
+                                                return <div className="space-y-6 animate-in fade-in duration-300">
+                                                    <Card><CardHeader className="py-3 bg-blue-50"><CardTitle className="text-base text-blue-800">1. 季考核成績匯總 (佔15%)</CardTitle></CardHeader><CardContent className="pt-4"><div className="flex justify-between items-center text-sm mb-2">{res.qDetails.map(q => (<div key={q.q} className="text-center p-2 bg-slate-100 rounded min-w-[60px]"><div className="text-slate-500 font-bold">{q.q}</div><div className="font-mono">{typeof q.val === 'number' ? q.val.toFixed(1) : q.val}</div></div>))}<div className="text-xl font-bold text-blue-600 px-4">Avg: {res.qAvg} <span className="text-sm text-slate-400">x 15% = </span> {res.annualFromQuarter}</div></div></CardContent></Card>
+                                                    <div className="grid md:grid-cols-3 gap-6">
+                                                        <div className="md:col-span-2 space-y-6">
+                                                            <Card><CardHeader className="py-3 bg-slate-50"><CardTitle className="text-base">2. 出勤與獎懲</CardTitle></CardHeader><CardContent className="pt-4 grid grid-cols-1 gap-4"><div className="bg-red-50 p-3 rounded"><h4 className="font-bold text-red-800 text-sm mb-2">出勤扣分 (次/天)</h4>
+                                                            <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-sm">
+                                                                <div><label className="text-xs text-slate-500 block">遲到早退 (3次-0.5)</label><Input type="number" value={bonus.late||''} onChange={e=>updateBonus(recordKey, 'late', e.target.value)} /></div>
+                                                                <div><label className="text-xs text-slate-500 block">曠班 (1次-1)</label><Input type="number" value={bonus.absent||''} onChange={e=>updateBonus(recordKey, 'absent', e.target.value)} /></div>
+                                                                <div><label className="text-xs text-slate-500 block">未依規定請假 (1次-0.2)</label><Input type="number" value={bonus.leave||''} onChange={e=>updateBonus(recordKey, 'leave', e.target.value)} /></div>
+                                                                <div><label className="text-xs text-slate-500 block">忘記簽退 (2次-0.5)</label><Input type="number" value={bonus.forgot||''} onChange={e=>updateBonus(recordKey, 'forgot', e.target.value)} /></div>
+                                                                <div><label className="text-xs text-slate-500 block">定位異常 (5次-0.5)</label><Input type="number" value={bonus.gps||''} onChange={e=>updateBonus(recordKey, 'gps', e.target.value)} /></div>
+                                                            </div>
+                                                            <div className="mt-2 text-right text-red-600 font-bold text-sm">出勤小計扣分: -{res.attDeduct}</div>
+                                                            </div><div className="bg-green-50 p-3 rounded"><h4 className="font-bold text-green-800 text-sm mb-2">獎懲狀況 (支)</h4>
+                                                            <div className="grid grid-cols-3 md:grid-cols-6 gap-2 text-sm">
+                                                                <div><label className="text-xs text-green-700 block">嘉獎 (+0.3)</label><Input type="number" value={bonus.commendation1||''} onChange={e=>updateBonus(recordKey, 'commendation1', e.target.value)} /></div>
+                                                                <div><label className="text-xs text-green-700 block">小功 (+1)</label><Input type="number" value={bonus.commendation2||''} onChange={e=>updateBonus(recordKey, 'commendation2', e.target.value)} /></div>
+                                                                <div><label className="text-xs text-green-700 block">大功 (+3)</label><Input type="number" value={bonus.commendation3||''} onChange={e=>updateBonus(recordKey, 'commendation3', e.target.value)} /></div>
+                                                                <div><label className="text-xs text-red-700 block">申誡 (-0.3)</label><Input type="number" value={bonus.warning||''} onChange={e=>updateBonus(recordKey, 'warning', e.target.value)} /></div>
+                                                                <div><label className="text-xs text-red-700 block">小過 (-1)</label><Input type="number" value={bonus.minor||''} onChange={e=>updateBonus(recordKey, 'minor', e.target.value)} /></div>
+                                                                <div><label className="text-xs text-red-700 block">大過 (-3)</label><Input type="number" value={bonus.major||''} onChange={e=>updateBonus(recordKey, 'major', e.target.value)} /></div>
+                                                            </div>
+                                                            <div className="mt-2 text-right text-green-700 font-bold text-sm">獎懲小計: {parseFloat(res.rewardsScore) > 0 ? '+' : ''}{res.rewardsScore}</div>
+                                                            </div></CardContent></Card>
+                                                            {ANNUAL_STRUCTURE.map(sec => (<Card key={sec.id}><CardHeader className="py-3 bg-slate-50"><CardTitle className="text-base">{sec.title}</CardTitle></CardHeader><CardContent className="p-0"><table className="w-full text-sm"><thead className="bg-slate-100 text-xs text-slate-500"><tr><th className="p-2 text-left">項目 (滿分如題示)</th><th className="w-16 text-center">自評</th><th className="w-16 text-center">督導</th><th className="w-16 text-center">主任</th></tr></thead><tbody className="divide-y">{sec.items.map(item => {const s = scores[item.id] || {}; return <tr key={item.id}><td className="p-2">{item.text}</td><td className="p-1"><Input className="text-center px-0" value={s.self||''} onChange={e=>updateScore(recordKey, item.id, 'self', e.target.value)} /></td><td className="p-1"><Input className="text-center px-0 bg-blue-50" value={s.sup||''} onChange={e=>updateScore(recordKey, item.id, 'sup', e.target.value)} /></td><td className="p-1"><Input className="text-center" placeholder={`/${item.max}`} value={s.dir||''} onChange={e=>updateScore(recordKey, item.id, 'dir', e.target.value)} /></td></tr>;})}</tbody></table></CardContent></Card>))}
+                                                        </div>
+                                                        <div className="md:col-span-1"><Card className="bg-slate-900 text-white sticky top-4 border-none shadow-xl"><CardHeader><CardTitle className="flex items-center gap-2"><Icons.Trophy className="text-yellow-400"/> 年度總成績</CardTitle></CardHeader><CardContent className="space-y-4"><div className="text-center py-4 border-b border-slate-700"><div className="text-6xl font-bold font-mono text-yellow-400">{res.final}</div></div><div className="space-y-2 text-sm"><div className="flex justify-between"><span>季考核 (15%)</span><span className="font-mono">{res.annualFromQuarter}</span></div><div className="flex justify-between"><span>自評 (10%)</span><span className="font-mono">{res.scoreSelf}</span></div><div className="flex justify-between"><span>督導 (50%)</span><span className="font-mono">{res.scoreSup}</span></div><div className="flex justify-between"><span>主任 (25%)</span><span className="font-mono">{res.scoreDir}</span></div><div className="border-t border-slate-700 my-2 pt-2"></div><div className="flex justify-between text-red-400"><span>出勤扣分</span><span className="font-mono">-{res.attDeduct}</span></div><div className="flex justify-between text-green-400"><span>獎懲加減</span><span className="font-mono">{parseFloat(res.rewardsScore) > 0 ? '+' : ''}{res.rewardsScore}</span></div></div></CardContent></Card></div>
+                                                    </div>
+                                                </div>;
+                                            })()
+                                        : 
+                                            (() => {
+                                                const result = calculateQuarterly(currentRecord);
+                                                return <div className="space-y-6 animate-in fade-in duration-300">
+                                                    <Card className="border-purple-200 bg-purple-50">
+                                                        <CardContent className="pt-6 flex flex-col md:flex-row items-center justify-between gap-4">
+                                                            <div className="flex items-center gap-2">
+                                                                <div className="bg-purple-200 p-2 rounded-full"><Icons.History className="w-5 h-5 text-purple-700"/></div>
+                                                                <div>
+                                                                    <label className="font-bold text-purple-800 text-lg">歷史成績快速補登 (總分)</label>
+                                                                    <p className="text-xs text-purple-600">若有填寫此欄，將直接使用此分數，忽略下方評核表。</p>
+                                                                </div>
+                                                            </div>
+                                                            <div className="flex items-center gap-3">
+                                                                <span className="font-bold text-slate-600">本季總分：</span>
+                                                                <Input type="number" className="w-32 bg-white font-bold text-lg h-12 text-center border-purple-300 focus:ring-purple-500" placeholder="0.00" value={currentRecord.manualScore || ''} onChange={(e) => updateRecord(recordKey, 'manualScore', e.target.value)} />
+                                                            </div>
+                                                        </CardContent>
+                                                    </Card>
+                                                    {!result.isManual && (
+                                                        <>
+                                                            <div className="flex items-center space-x-2 bg-yellow-50 p-3 rounded border border-yellow-200"><input type="checkbox" id="isNewHire" checked={currentRecord.isNewHire || false} onChange={(e) => updateRecord(recordKey, 'isNewHire', e.target.checked)} className="w-4 h-4 text-blue-600 rounded" /><label htmlFor="isNewHire" className="text-sm font-medium text-slate-800">此考核為「新進人員/試用期」考核 (勾選後，此分數將<span className="text-red-600 font-bold">不列入</span>年度平均計算)</label></div>
+                                                            <div className="grid md:grid-cols-2 gap-4"><div className="space-y-4"><Card><CardContent className="pt-6"><h3 className="font-bold mb-4 flex items-center gap-2"><Icons.Trophy className="h-4 w-4 text-amber-500"/> 加扣分</h3><div className="grid grid-cols-2 gap-4 text-sm"><label>介紹新人 (人)</label><Input type="number" value={currentRecord.bonus?.newStaff||''} onChange={e=>updateBonus(recordKey, 'newStaff', e.target.value)} /><label>介紹個案 (案)</label><Input type="number" value={currentRecord.bonus?.newCase||''} onChange={e=>updateBonus(recordKey, 'newCase', e.target.value)} /><label>創新經驗 (分)</label><Input type="number" value={currentRecord.bonus?.innovation||''} onChange={e=>updateBonus(recordKey, 'innovation', e.target.value)} /><label className="text-red-600">稽核異常 (項)</label><Input type="number" value={currentRecord.bonus?.auditError||''} onChange={e=>updateBonus(recordKey, 'auditError', e.target.value)} /><label className="text-red-600">申訴屬實 (案)</label><Input type="number" value={currentRecord.bonus?.complaint||''} onChange={e=>updateBonus(recordKey, 'complaint', e.target.value)} /></div></CardContent></Card>{QUARTERLY_STRUCTURE.map(sec => (<Card key={sec.id}><CardHeader className="py-3 bg-slate-50"><CardTitle className="text-base">{sec.title}</CardTitle></CardHeader><CardContent className="p-0"><table className="w-full text-sm"><thead className="bg-slate-100 text-xs text-slate-500"><tr><th className="p-2 text-left">項目</th><th className="w-12 text-center">自評</th><th className="w-12 text-center">督導</th><th className="w-12 text-center">主任</th></tr></thead><tbody className="divide-y">{sec.items.map(item => {const s = currentRecord.scores?.[item.id] || {}; return <tr key={item.id}><td className="p-2">{item.text}</td><td className="p-1"><Input className="text-center px-0" value={s.self||''} onChange={e=>updateScore(recordKey, item.id, 'self', e.target.value)} /></td><td className="p-1"><Input className="text-center px-0 bg-blue-50" value={s.sup||''} onChange={e=>updateScore(recordKey, item.id, 'sup', e.target.value)} /></td><td className="p-1"><Input className="text-center px-0" value={s.dir||''} onChange={e=>updateScore(recordKey, item.id, 'dir', e.target.value)} /></td></tr>;})}</tbody></table></CardContent></Card>))}</div><div className="space-y-4"><Card className="bg-slate-800 text-white border-none sticky top-4"><CardHeader><CardTitle>本季成績單</CardTitle></CardHeader><CardContent><div className="text-5xl font-bold font-mono text-center mb-4">{result.total}</div><div className="space-y-2 text-sm text-slate-300">{result.details.map((d,i) => (<div key={i} className="flex justify-between border-b border-slate-700 pb-1"><span>{d.title}</span><span>{d.weighted}</span></div>))}</div>{currentRecord.isNewHire && <div className="mt-4 text-center bg-yellow-500/20 text-yellow-300 py-1 rounded">試用期 / 不計入年度</div>}</CardContent></Card></div></div>
+                                                        </>
+                                                    )}
+                                                </div>;
+                                            })()
+                                        }
+                                    </div>
+                                ) : (
+                                    <div className="h-full flex flex-col items-center justify-center text-slate-400"><Icons.Users className="h-16 w-16 mb-4 opacity-20" /><p>請選擇左側居服員進行考核</p></div>
+                                )
+                            ) : (
+                                <div className="max-w-5xl mx-auto"><RankingView staffList={staffList} allData={allData} currentYear={currentYear} currentQuarter={currentQuarter} /></div>
+                            )}
+                        </main>
+                    </div>
+
+                    <Modal isOpen={isStaffModalOpen} onClose={() => setIsStaffModalOpen(false)} title={editingStaff ? "編輯居服員資料" : "新增居服員"}>
+                        <form onSubmit={handleSaveStaff} className="space-y-4">
+                            <div><label className="block text-sm font-medium mb-1">姓名</label><Input name="name" defaultValue={editingStaff?.name} required /></div>
+                            <div className="grid grid-cols-2 gap-4"><div><label className="block text-sm font-medium mb-1">到職日 (如 113-01-01)</label><Input name="onboardDate" defaultValue={editingStaff?.onboardDate} placeholder="YYY-MM-DD" /></div><div><label className="block text-sm font-medium mb-1">離職日 (選填)</label><Input name="resignDate" defaultValue={editingStaff?.resignDate} placeholder="YYY-MM-DD" /><p className="text-xs text-slate-500 mt-1">設定後該日期後的季度將無法考核</p></div></div>
+                            <div className="flex justify-end pt-4"><Button type="submit"><Icons.Save className="w-4 h-4 mr-2"/> 儲存並同步</Button></div>
+                        </form>
+                    </Modal>
+                    {saving && <div className="saving-indicator flex items-center gap-1"><Icons.Cloud className="w-3 h-3 animate-bounce"/> 儲存中...</div>}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

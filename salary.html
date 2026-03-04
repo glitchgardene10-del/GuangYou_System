@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>行政人員薪資管理系統 (v17.0 離職過濾版)</title>
+    
+    <script src="auth-guard.js"></script>
+    <script type="module" src="config.js"></script>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dayjs/1.11.10/dayjs.min.js"></script>
+
+    <style>
+        body { opacity: 0; animation: fadeIn 0.5s forwards; font-family: "Microsoft JhengHei", sans-serif; }
+        @keyframes fadeIn { to { opacity: 1; } }
+        .salary-slip { border: 2px solid #000; background: white; color: black; width: 210mm; min-height: 297mm; padding: 40px; box-sizing: border-box; position: relative; }
+        .custom-scrollbar::-webkit-scrollbar { width: 8px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #f1f1f1; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        #batch-container { position: absolute; top: -9999px; left: -9999px; }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-900 font-sans">
+    <div id="root"></div>
+    <div id="batch-container"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const Icon = ({ path, className }) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>{path}</svg>;
+        const Calculator = (p) => <Icon {...p} path={<><rect width="16" height="20" x="4" y="2" rx="2"/><line x1="8" x2="16" y1="6" y2="6"/><line x1="16" x2="16" y1="14" y2="18"/><path d="M16 10h.01"/><path d="M12 10h.01"/><path d="M8 10h.01"/><path d="M12 14h.01"/><path d="M8 14h.01"/><path d="M12 18h.01"/><path d="M8 18h.01"/></>} />;
+        const Package = (p) => <Icon {...p} path={<><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></>} />;
+        const Refresh = (p) => <Icon {...p} path={<><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/><path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"/></>} />;
+        const SaveDisk = (p) => <Icon {...p} path={<><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></>} />;
+        const ImageDown = (p) => <Icon {...p} path={<><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></>} />;
+
+        const DEFAULT_MONTHLY_DATA = {
+            performanceBonus: 0, festivalBonus: 0, birthdayBonus: 0, otherPlus: 0,
+            otherDeduct: 0, pensionSelfRate: 0,
+            sickLeaveHours: 0, menstrualLeaveHours: 0,
+            personalLeaveHours: 0, familyCareLeaveHours: 0,
+            specialLeaveHours: 0, compLeaveHours: 0, funeralLeaveHours: 0,
+            weddingLeaveHours: 0, prenatalLeaveHours: 0, paternityLeaveHours: 0,
+            maternityLeaveHours: 0, ritualLeaveHours: 0, officialLeaveHours: 0,
+            note: '', snapshot: null, finalResult: null
+        };
+
+        const PayrollSystem = () => {
+            const [employees, setEmployees] = useState([]);
+            const [monthlyDataMap, setMonthlyDataMap] = useState({});
+            const [currentMonth, setCurrentMonth] = useState(dayjs().subtract(1, 'month').format('YYYY-MM'));
+            const [selectedEmpId, setSelectedEmpId] = useState('');
+            const [loading, setLoading] = useState(false);
+            const [filterStatus, setFilterStatus] = useState('active'); 
+            const previewRef = useRef(null);
+            
+            const [isSystemReady, setIsSystemReady] = useState(false);
+
+            useEffect(() => {
+                const timer = setInterval(() => {
+                    if (window.db && window.auth) {
+                        clearInterval(timer);
+                        setIsSystemReady(true);
+                    }
+                }, 100);
+                return () => clearInterval(timer);
+            }, []);
+
+            useEffect(() => {
+                if (!isSystemReady) return;
+                
+                const q = window.query(window.collection(window.db, "employees"), window.where("role", "==", "admin"));
+                const unsubscribe = window.onSnapshot(q, (snapshot) => {
+                    let empList = [];
+                    snapshot.forEach(doc => {
+                        const data = doc.data();
+                        empList.push({
+                            id: doc.id,
+                            empNo: data.code || '',
+                            name: data.name,
+                            position: '行政人員',
+                            baseSalary: Number(data.baseSalary) || 0,
+                            positionBonus: Number(data.positionBonus) || 0,
+                            fuelSubsidy: Number(data.fuelSubsidy) || 0,
+                            insuranceLevel: Number(data.insuranceLevel) || 0,
+                            laborIns: Number(data.laborIns) || 0,
+                            healthIns: Number(data.healthIns) || 0,
+                            healthInsFamily: Number(data.healthInsFamily) || 0,
+                            hireDate: data.joinDate,
+                            resignationDate: data.resignDate || '', // 確保讀取離職日
+                            // ★ 新增：讀取銀行資訊供薪資單顯示
+                            bankCode: data.bankCode || '006',
+                            bankAccount: data.bankAccount || ''
+                        });
+                    });
+                    empList.sort((a,b) => a.empNo.localeCompare(b.empNo));
+                    setEmployees(empList);
+                });
+                return () => unsubscribe();
+            }, [isSystemReady]);
+
+            useEffect(() => {
+                if (!isSystemReady) return;
+                const docRef = window.doc(window.db, "salary_records_admin", currentMonth);
+                const unsubscribe = window.onSnapshot(docRef, (docSnap) => {
+                    if (docSnap.exists()) setMonthlyDataMap(docSnap.data());
+                    else setMonthlyDataMap({});
+                });
+                return () => unsubscribe();
+            }, [currentMonth, isSystemReady]);
+
+            const getCurrentData = (empId) => monthlyDataMap[empId] || DEFAULT_MONTHLY_DATA;
+
+            const updateCurrentData = (field, value) => {
+                if (!selectedEmpId) return;
+                const current = monthlyDataMap[selectedEmpId] || DEFAULT_MONTHLY_DATA;
+                setMonthlyDataMap({ ...monthlyDataMap, [selectedEmpId]: { ...current, [field]: value } });
+            };
+
+            const handleSave = async () => {
+                setLoading(true);
+                try {
+                    const dataToSave = {}; 
+                    employees.forEach(emp => {
+                        const currentData = monthlyDataMap[emp.id] || DEFAULT_MONTHLY_DATA;
+                        const result = calculatePayroll(emp, currentData);
+                        if (result) {
+                            dataToSave[emp.id] = {
+                                ...currentData,
+                                snapshot: {
+                                    baseSalary: emp.baseSalary,
+                                    positionBonus: emp.positionBonus,
+                                    fuelSubsidy: emp.fuelSubsidy,
+                                    laborIns: emp.laborIns,
+                                    healthIns: emp.healthIns,
+                                    insuranceLevel: emp.insuranceLevel
+                                },
+                                finalResult: {
+                                    grossSalary: result.grossSalary,
+                                    netSalary: result.netSalary,
+                                    employerPension: result.pensionCompany,
+                                    totalDeduction: result.deductRightTotal + result.deductLeftTotal,
+                                    payDays: result.payDays,
+                                    isProrated: result.isProrated,
+                                    calculatedAt: new Date().toISOString()
+                                }
+                            };
+                        }
+                    });
+
+                    if (Object.keys(dataToSave).length === 0) {
+                        alert("⚠️ 沒有有效的行政人員資料可儲存！");
+                        setLoading(false);
+                        return;
+                    }
+
+                    await window.setDoc(window.doc(window.db, "salary_records_admin", currentMonth), dataToSave, { merge: true });
+                    alert(`✅ 成功歸檔 ${Object.keys(dataToSave).length} 筆資料！`);
+                    
+                } catch (e) { 
+                    console.error(e); 
+                    alert("儲存失敗：" + e.message); 
+                }
+                setLoading(false);
+            };
+
+            const handleAutoFill = async () => {
+                if (!selectedEmpId) return;
+                setLoading(true);
+                try {
+                    const startStr = `${currentMonth}-01`;
+                    const endStr = dayjs(currentMonth).endOf('month').format('YYYY-MM-DD');
+                    const qLeave = window.query(
+                        window.collection(window.db, "leave_records"), 
+                        window.where("empId", "==", selectedEmpId)
+                    );
+                    const snapshot = await window.getDocs(qLeave);
+                    let newData = { ...getCurrentData(selectedEmpId) };
+                    Object.keys(DEFAULT_MONTHLY_DATA).forEach(k => {
+                        if(k.endsWith('Hours')) newData[k] = 0;
+                    });
+                    newData.otherPlus = 0;
+                    
+                    let cashOutTotal = 0; 
+                    let cashOutNotes = [];
+                    let matchCount = 0;
+
+                    snapshot.forEach(doc => {
+                        const r = doc.data();
+                        if (r.date >= startStr && r.date <= endStr) {
+                            matchCount++;
+                            const hours = Number(r.hours) || 0;
+                            const type = r.type || "";
+                            if (type.includes('生理')) newData.menstrualLeaveHours += hours;
+                            else if (type.includes('病')) newData.sickLeaveHours += hours;
+                            else if (type.includes('家庭')) newData.familyCareLeaveHours += hours;
+                            else if (type.includes('事')) newData.personalLeaveHours += hours;
+                            else if (type.includes('特休')) newData.specialLeaveHours += hours;
+                            else if (type.includes('補休')) newData.compLeaveHours += hours;
+                            else if (type.includes('婚')) newData.weddingLeaveHours += hours;
+                            else if (type.includes('喪')) newData.funeralLeaveHours += hours;
+                            else if (type.includes('產檢')) newData.prenatalLeaveHours += hours;
+                            else if (type.includes('陪產')) newData.paternityLeaveHours += hours;
+                            else if (type.includes('產')) newData.maternityLeaveHours += hours;
+                            else if (type.includes('祭儀')) newData.ritualLeaveHours += hours;
+                            else if (type.includes('公')) newData.officialLeaveHours += hours;
+                            else if (type === 'cash_out') {
+                                const emp = employees.find(e => e.id == selectedEmpId);
+                                if(emp) {
+                                    const hourlyRate = (emp.baseSalary + emp.positionBonus) / 240; 
+                                    const amount = Math.round(hourlyRate * hours);
+                                    cashOutTotal += amount;
+                                    cashOutNotes.push(`${r.date}折現${hours}H`);
+                                }
+                            }
+                        }
+                    });
+
+                    if(cashOutTotal > 0) {
+                        newData.otherPlus = cashOutTotal;
+                        newData.note = (newData.note ? newData.note + '\n' : '') + `★ 特休折現: $${cashOutTotal} (${cashOutNotes.join(', ')})`;
+                    }
+
+                    setMonthlyDataMap({ ...monthlyDataMap, [selectedEmpId]: newData });
+                    alert(`✅ 自動帶入成功！\n找到 ${matchCount} 筆資料。`);
+
+                } catch(e) { console.error(e); alert(`❌ 失敗：${e.message}`); }
+                setLoading(false);
+            };
+
+            const calculateProrata = (emp, year, month) => {
+                let payDays = 30; let isProrated = false; let reason = "";
+                let hD = 0, isHireMonth = false; let rD = 0, isResignMonth = false;
+                if (emp.hireDate) {
+                    const [hY, hM, d] = emp.hireDate.replace(/\//g,'-').split('-').map(Number);
+                    if (hY === year && hM === month) { isHireMonth = true; hD = d; }
+                }
+                if (emp.resignationDate) {
+                    const [rY, rM, d] = emp.resignationDate.replace(/\//g,'-').split('-').map(Number);
+                    if (rY === year && rM === month) { isResignMonth = true; rD = d; }
+                }
+                if (isHireMonth && isResignMonth) { payDays = rD - hD + 1; isProrated = true; reason = `短期 (${month}/${hD}~${month}/${rD})`; } 
+                else if (isHireMonth) { payDays = 30 - hD + 1; isProrated = true; reason = `新進 (${month}/${hD})`; } 
+                else if (isResignMonth) { payDays = rD; isProrated = true; reason = `離職 (${month}/${rD})`; }
+                if (payDays < 0) payDays = 0;
+                return { payDays, isProrated, reason };
+            };
+
+            const calculatePayroll = (emp, data) => {
+                if (!emp) return null;
+                const useSnapshot = data.snapshot && Object.keys(data.snapshot).length > 0;
+                const baseFull = useSnapshot ? data.snapshot.baseSalary : (Number(emp.baseSalary) || 0);
+                const posFull = useSnapshot ? data.snapshot.positionBonus : (Number(emp.positionBonus) || 0);
+                const fuelFull = useSnapshot ? data.snapshot.fuelSubsidy : (Number(emp.fuelSubsidy) || 0);
+                const laborInsFull = useSnapshot ? data.snapshot.laborIns : (Number(emp.laborIns) || 0);
+                const insuranceLevel = useSnapshot ? data.snapshot.insuranceLevel : (Number(emp.insuranceLevel) || 0);
+                const healthInsFull = useSnapshot ? data.snapshot.healthIns : (Number(emp.healthIns) || 0);
+
+                const [year, month] = currentMonth.split('-').map(Number);
+                const { payDays, isProrated, reason } = calculateProrata(emp, year, month);
+                const ratio = payDays / 30;
+
+                const base = Math.round(baseFull * ratio);
+                const pos = Math.round(posFull * ratio);
+                const fuel = Math.round(fuelFull * ratio);
+                
+                const hourlyRate = (baseFull + posFull) / 240;
+
+                const perf = Math.round(Number(data.performanceBonus) || 0);
+                const fest = Math.round(Number(data.festivalBonus) || 0);
+                const birth = Math.round(Number(data.birthdayBonus) || 0);
+                const otherP = Math.round(Number(data.otherPlus) || 0);
+
+                const halfPayHours = (Number(data.sickLeaveHours) || 0) + (Number(data.menstrualLeaveHours) || 0);
+                const sickDeduct = Math.round(hourlyRate * halfPayHours * 0.5); 
+                
+                const noPayHours = (Number(data.personalLeaveHours) || 0) + (Number(data.familyCareLeaveHours) || 0);
+                const personalDeduct = Math.round(hourlyRate * noPayHours); 
+                
+                const otherD = Math.round(Number(data.otherDeduct) || 0);
+
+                const laborIns = Math.round(laborInsFull * ratio);
+                const pensionCompany = Math.round((insuranceLevel * 0.06) * ratio);
+                const pensionSelf = Math.round((insuranceLevel * (Number(data.pensionSelfRate) || 0) / 100) * ratio);
+
+                let healthIns = Math.round(healthInsFull * ratio);
+                let healthInsFamily = Math.round(Number(emp.healthInsFamily || 0) * ratio); 
+
+                const grossSalary = base + pos + fuel + perf + fest + birth + otherP;
+                const salaryDeductions = sickDeduct + personalDeduct + otherD;
+                const totalDeductionBlock = laborIns + healthIns + healthInsFamily + pensionSelf;
+                
+                const netSalary = Math.round(grossSalary - salaryDeductions - totalDeductionBlock);
+
+                return {
+                    emp, month: currentMonth, base, pos, fuel, perf, fest, birth, otherP,
+                    sickDeduct, personalDeduct, otherD, laborIns, healthIns, healthInsFamily, pensionSelf,
+                    grossSalary, incomeTotal: grossSalary, deductLeftTotal: sickDeduct + personalDeduct + otherD,
+                    deductRightTotal: totalDeductionBlock, netSalary, pensionCompany, data,
+                    isProrated, payDays, reason, baseFull, useSnapshot
+                };
+            };
+
+            const getSalarySlipHTML = (r) => `
+                <div class="salary-slip" style="width: 210mm; min-height: 297mm; padding: 40px; background: white; color: black; font-family: Microsoft JhengHei, sans-serif; border: 2px solid black; position: relative;">
+                    <div style="text-align: center; margin-bottom: 24px;">
+                        <h1 style="font-size: 24px; font-weight: bold; margin-bottom: 4px;">光祐有限公司附設花蓮縣光祐私立居家式服務</h1>
+                        <h2 style="font-size: 20px; font-weight: bold; margin-bottom: 16px;">類長照照顧服務機構</h2>
+                        <div style="font-size: 24px; font-weight: bold; border-bottom: 2px solid black; padding-bottom: 8px; margin-bottom: 16px;">${r.month} 薪資明細 ${r.useSnapshot ? '<span style="font-size:12px; font-weight:normal; color:#666;">(已鎖定)</span>' : ''}</div>
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 32px; margin-bottom: 24px;">
+                        <div style="font-size: 16px;">
+                            <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #ccc; padding-bottom: 4px; margin-bottom: 8px;"><span style="color: #666;">員工姓名：</span><span style="font-weight: bold; font-size: 18px;">${r.emp.name}</span></div>
+                            <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #ccc; padding-bottom: 4px; margin-bottom: 8px;"><span style="color: #666;">員工編號：</span><span style="font-family: monospace;">${r.emp.empNo}</span></div>
+                            <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #ccc; padding-bottom: 4px; margin-bottom: 8px;"><span style="color: #666;">勞保級距：</span><span style="font-family: monospace;">${new Intl.NumberFormat('zh-TW').format(r.emp.insuranceLevel)}</span></div>
+                            <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #ccc; padding-bottom: 4px; margin-bottom: 8px;"><span style="color: #666;">勞退提撥(6%)：</span><span style="font-family: monospace;">${new Intl.NumberFormat('zh-TW').format(r.pensionCompany)}</span></div>
+                        </div>
+                        <div style="text-align: right;">
+                            <div style="margin-bottom: 16px;"><div style="color: #666; font-size: 14px;">本月薪資 (應發)</div><div style="font-size: 24px; font-weight: bold;">${new Intl.NumberFormat('zh-TW', {style:'currency',currency:'TWD',minimumFractionDigits:0, maximumFractionDigits:0}).format(r.incomeTotal)}</div></div>
+                            <div><div style="color: #666; font-size: 14px;">實領薪資 (實發)</div><div style="font-size: 32px; font-weight: bold; border-bottom: 4px double black; display: inline-block;">${new Intl.NumberFormat('zh-TW', {style:'currency',currency:'TWD',minimumFractionDigits:0, maximumFractionDigits:0}).format(r.netSalary)}</div></div>
+                        </div>
+                    </div>
+                    ${r.isProrated ? `<div style="background: #fff7ed; color: #c2410c; padding: 8px; border: 1px dashed #f97316; margin-bottom: 16px; font-size: 14px; text-align: center;"><b>注意：</b>此為未滿月薪資 (${r.reason})，以 <b>${r.payDays}/30</b> 天計算。</div>` : ''}
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start;">
+                        <div>
+                            <div style="background: #f0f0f0; border-top: 1px solid black; border-bottom: 1px solid black; font-weight: bold; padding: 4px 8px; margin-bottom: 8px;">薪資明細 (加項/減項)</div>
+                            <table style="width: 100%; border-collapse: collapse;">
+                                ${[
+                                    ['本薪', r.base, r.isProrated ? `(原:${r.baseFull})` : '', ''], 
+                                    ['職務加給', r.pos, '', ''], ['績效獎金', r.perf, '', ''], ['三節禮金', r.fest, '', ''], ['生日禮金', r.birth, '', ''], ['油資補助', r.fuel, '', ''], ['其他(加)', r.otherP, '', ''],
+                                    ['半薪假扣款', r.sickDeduct ? -r.sickDeduct : 0, '(病假/生理假)', 'color:red;'], 
+                                    ['全薪假扣款', r.personalDeduct ? -r.personalDeduct : 0, '(事假/家庭照顧)', 'color:red;'], 
+                                    ['其他(扣)', r.otherD ? -r.otherD : 0, '', 'color:red;']
+                                ].map(i => `<tr style="border-bottom: 1px dotted #ccc;"><td style="padding: 4px 0;">${i[0]} <span style="font-size:10px;color:#888">${i[2]||''}</span></td><td style="text-align: right; font-family: monospace; ${i[3]||''}">${i[1]!==0?new Intl.NumberFormat('zh-TW').format(i[1]):'-'}</td></tr>`).join('')}
+                                <tr style="font-weight: bold; border-top: 2px solid black;"><td style="padding: 8px 0;">薪資小計</td><td style="text-align: right;">${new Intl.NumberFormat('zh-TW', {style:'currency',currency:'TWD',minimumFractionDigits:0, maximumFractionDigits:0}).format(r.incomeTotal - r.deductLeftTotal)}</td></tr>
+                            </table>
+                        </div>
+                        <div style="display: flex; flex-direction: column; gap: 24px;">
+                            <div>
+                                <div style="background: #f0f0f0; border-top: 1px solid black; border-bottom: 1px solid black; font-weight: bold; padding: 4px 8px; margin-bottom: 8px;">代扣明細 (保險)</div>
+                                <table style="width: 100%; border-collapse: collapse;">
+                                    ${[['勞保費', r.laborIns], ['健保費(本人)', r.healthIns], ['健保費(眷屬)', r.healthInsFamily], ['勞退自提', r.pensionSelf]].map(i => `<tr style="border-bottom: 1px dotted #ccc;"><td style="padding: 4px 0;">${i[0]}</td><td style="text-align: right; font-family: monospace;">${i[1]!==0?new Intl.NumberFormat('zh-TW').format(i[1]):'-'}</td></tr>`).join('')}
+                                    <tr style="font-weight: bold; border-top: 2px solid black; color: #b91c1c;"><td style="padding: 8px 0;">代扣小計</td><td style="text-align: right;">-${new Intl.NumberFormat('zh-TW', {style:'currency',currency:'TWD',minimumFractionDigits:0, maximumFractionDigits:0}).format(r.deductRightTotal)}</td></tr>
+                                </table>
+                            </div>
+                            <div>
+                                <div style="background: #f0f0f0; border-top: 1px solid black; border-bottom: 1px solid black; font-weight: bold; padding: 4px 8px; margin-bottom: 8px;">工時與假別 (小時)</div>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 13px;">
+                                    ${r.data.specialLeaveHours ? `<div>特休: ${r.data.specialLeaveHours}</div>` : ''}
+                                    ${r.data.compLeaveHours ? `<div>補休: ${r.data.compLeaveHours}</div>` : ''}
+                                    ${r.data.sickLeaveHours ? `<div>病假: ${r.data.sickLeaveHours}</div>` : ''}
+                                    ${r.data.personalLeaveHours ? `<div>事假: ${r.data.personalLeaveHours}</div>` : ''}
+                                    ${r.data.menstrualLeaveHours ? `<div>生理假: ${r.data.menstrualLeaveHours}</div>` : ''}
+                                    ${r.data.familyCareLeaveHours ? `<div>家庭照顧: ${r.data.familyCareLeaveHours}</div>` : ''}
+                                    ${r.data.weddingLeaveHours ? `<div>婚假: ${r.data.weddingLeaveHours}</div>` : ''}
+                                    ${r.data.funeralLeaveHours ? `<div>喪假: ${r.data.funeralLeaveHours}</div>` : ''}
+                                    ${r.data.prenatalLeaveHours ? `<div>產檢假: ${r.data.prenatalLeaveHours}</div>` : ''}
+                                    ${r.data.paternityLeaveHours ? `<div>陪產假: ${r.data.paternityLeaveHours}</div>` : ''}
+                                    ${r.data.maternityLeaveHours ? `<div>產假: ${r.data.maternityLeaveHours}</div>` : ''}
+                                    ${r.data.ritualLeaveHours ? `<div>歲時祭儀: ${r.data.ritualLeaveHours}</div>` : ''}
+                                    ${r.data.officialLeaveHours ? `<div>公假: ${r.data.officialLeaveHours}</div>` : ''}
+                                </div>
+                            </div>
+                            <div style="border: 1px solid black; padding: 8px; margin-top: auto; min-height: 80px;">
+                                <div style="font-weight: bold; font-size: 12px; border-bottom: 1px solid black; display: inline-block; margin-bottom: 4px;">備註說明/公告事項</div>
+                                <div style="white-space: pre-wrap;">${r.data.note}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>`;
+
+            const getFilteredEmployees = () => {
+                return employees.filter(e => {
+                    if (filterStatus === 'active') return !e.resignationDate;
+                    if (filterStatus === 'resigned') return !!e.resignationDate;
+                    return true;
+                });
+            };
+
+            const filteredEmployees = getFilteredEmployees();
+            const currentData = getCurrentData(selectedEmpId);
+            const currentEmp = employees.find(e => e.id == selectedEmpId);
+            const result = calculatePayroll(currentEmp, currentData);
+
+            const handleDownloadJPG = async () => {
+                if (!previewRef.current) return;
+                try {
+                    const canvas = await html2canvas(previewRef.current, { scale: 2, useCORS: true });
+                    canvas.toBlob((blob) => {
+                        saveAs(blob, `${currentEmp?.name}_${currentMonth}_薪資單.jpg`);
+                    });
+                } catch (err) { alert("下載失敗"); }
+            };
+
+            const handleBatchDownload = async () => {
+                const zip = new JSZip();
+                const container = document.getElementById('batch-container');
+                container.innerHTML = ''; 
+                if (filteredEmployees.length === 0) { alert("無資料可匯出"); return; }
+                alert(`處理中...`);
+
+                for (let emp of filteredEmployees) {
+                    const empData = monthlyDataMap[emp.id] || DEFAULT_MONTHLY_DATA;
+                    const res = calculatePayroll(emp, empData);
+                    const div = document.createElement('div');
+                    div.innerHTML = getSalarySlipHTML(res);
+                    container.appendChild(div);
+                    const el = div.querySelector('.salary-slip');
+                    try {
+                        const canvas = await html2canvas(el, { scale: 2, backgroundColor: '#ffffff' });
+                        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg'));
+                        zip.file(`${emp.name}_${currentMonth}.jpg`, blob);
+                    } catch (e) { }
+                }
+                container.innerHTML = ''; 
+                const content = await zip.generateAsync({ type: "blob" });
+                saveAs(content, `光祐行政薪資彙整_${currentMonth}.zip`);
+            };
+
+            if (!isSystemReady) return <div className="h-screen flex items-center justify-center font-bold text-slate-500 animate-pulse">系統連線中...</div>;
+
+            return (
+                <div className="min-h-screen pb-12">
+                    <header className="bg-slate-900 text-white p-4 sticky top-0 z-20 shadow-lg">
+                        <div className="max-w-7xl mx-auto flex justify-between items-center">
+                            <h1 className="text-xl font-bold flex items-center gap-2"><Calculator className="w-6 h-6"/> 行政人員薪資系統 (v17.0 離職過濾版)</h1>
+                            <div className="flex items-center gap-4">
+                                {loading && <span className="animate-pulse text-yellow-300">資料同步中...</span>}
+                                <button onClick={handleSave} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded font-bold transition-colors">
+                                    <SaveDisk className="w-4 h-4"/> 儲存本月資料
+                                </button>
+                            </div>
+                        </div>
+                    </header>
+
+                    <main className="max-w-[1600px] mx-auto p-6">
+                        <div className="grid lg:grid-cols-12 gap-6 h-[calc(100vh-100px)]">
+                            <div className="col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 overflow-y-auto custom-scrollbar flex flex-col">
+                                <div className="p-3 border-b sticky top-0 bg-white z-10 space-y-2">
+                                    <div>
+                                        <label className="text-xs font-bold text-slate-500 mb-1 block">計薪月份</label>
+                                        <input type="month" className="w-full p-2 border rounded bg-slate-50 font-bold" value={currentMonth} onChange={e=>setCurrentMonth(e.target.value)} />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-bold text-slate-500 mb-1 block">顯示篩選</label>
+                                        <select className="w-full p-2 border rounded text-sm bg-white" value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}>
+                                            <option value="active">🟢 在職人員</option>
+                                            <option value="resigned">🔴 已離職</option>
+                                            <option value="all">⚪ 顯示全部</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div className="flex-1 overflow-y-auto">
+                                    {filteredEmployees.length === 0 ? (
+                                        <div className="p-4 text-center text-gray-400 text-sm">無符合資料</div>
+                                    ) : (
+                                        filteredEmployees.map(e => (
+                                            <div key={e.id} onClick={()=>setSelectedEmpId(e.id)} 
+                                                className={`p-3 border-b cursor-pointer transition-colors hover:bg-blue-50 ${selectedEmpId===e.id?'bg-blue-100 border-l-4 border-l-blue-600':'border-l-4 border-l-transparent'}`}>
+                                                <div className="font-bold text-slate-800 flex justify-between items-center">
+                                                    {e.name}
+                                                    {e.resignationDate && <span className="text-[10px] text-red-500 bg-red-100 px-1 rounded">(離)</span>}
+                                                </div>
+                                                <div className="text-xs text-slate-500">{e.empNo}</div>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+                                <div className="p-3 border-t bg-slate-50">
+                                    <button onClick={handleBatchDownload} className="w-full bg-slate-800 text-white py-2 rounded text-sm flex justify-center gap-2 hover:bg-black items-center">
+                                        <Package className="w-4 h-4"/> 匯出列表 (ZIP)
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="col-span-3 bg-white rounded-xl shadow-sm border border-slate-200 overflow-y-auto custom-scrollbar p-5">
+                                {!selectedEmpId ? (
+                                    <div className="h-full flex items-center justify-center text-slate-400">請選擇員工</div>
+                                ) : (
+                                    <div className="space-y-6">
+                                        <div className="flex items-center justify-between">
+                                            <h3 className="font-bold text-lg text-slate-800">{currentEmp?.name} - 變動資料</h3>
+                                            <button onClick={handleAutoFill} className="text-xs bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full font-bold hover:bg-emerald-200 transition flex items-center gap-1">
+                                                <Refresh className="w-3 h-3"/> 自動帶入請假/折現
+                                            </button>
+                                        </div>
+                                        
+                                        {currentData.snapshot && (
+                                            <div className="bg-orange-50 border border-orange-200 text-orange-800 text-xs p-2 rounded mb-2">
+                                                🔒 此月份已鎖定薪資結構 (使用快照資料計算)
+                                            </div>
+                                        )}
+
+                                        <div className="space-y-3">
+                                            <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">額外獎金 / 加項</div>
+                                            <div className="grid grid-cols-2 gap-3">
+                                                <div><label className="text-xs text-slate-500">績效獎金</label><input type="number" className="w-full p-2 border rounded" value={currentData.performanceBonus} onChange={e=>updateCurrentData('performanceBonus',e.target.value)} onFocus={e=>e.target.select()} /></div>
+                                                <div><label className="text-xs text-slate-500">三節禮金</label><input type="number" className="w-full p-2 border rounded" value={currentData.festivalBonus} onChange={e=>updateCurrentData('festivalBonus',e.target.value)} onFocus={e=>e.target.select()} /></div>
+                                                <div><label className="text-xs text-slate-500">生日禮金</label><input type="number" className="w-full p-2 border rounded" value={currentData.birthdayBonus} onChange={e=>updateCurrentData('birthdayBonus',e.target.value)} onFocus={e=>e.target.select()} /></div>
+                                                <div><label className="text-xs text-slate-500">其他(加)</label><input type="number" className="w-full p-2 border rounded" value={currentData.otherPlus} onChange={e=>updateCurrentData('otherPlus',e.target.value)} onFocus={e=>e.target.select()} /></div>
+                                            </div>
+                                        </div>
+
+                                        <div className="space-y-3">
+                                            <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">應扣款假別 (系統自動扣薪)</div>
+                                            <div className="bg-red-50 p-3 rounded-lg border border-red-100 space-y-3">
+                                                <div className="grid grid-cols-2 gap-2">
+                                                    <div><label className="text-xs text-red-800 font-bold">病假 (扣半薪)</label><input type="number" className="w-full p-2 border border-red-200 rounded" value={currentData.sickLeaveHours} onChange={e=>updateCurrentData('sickLeaveHours',e.target.value)} onFocus={e=>e.target.select()} /></div>
+                                                    <div><label className="text-xs text-red-800 font-bold">生理假 (扣半薪)</label><input type="number" className="w-full p-2 border border-red-200 rounded" value={currentData.menstrualLeaveHours} onChange={e=>updateCurrentData('menstrualLeaveHours',e.target.value)} onFocus={e=>e.target.select()} /></div>
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-2">
+                                                    <div><label className="text-xs text-red-800 font-bold">事假 (扣全薪)</label><input type="number" className="w-full p-2 border border-red-200 rounded" value={currentData.personalLeaveHours} onChange={e=>updateCurrentData('personalLeaveHours',e.target.value)} onFocus={e=>e.target.select()} /></div>
+                                                    <div><label className="text-xs text-red-800 font-bold">家庭照顧 (扣全薪)</label><input type="number" className="w-full p-2 border border-red-200 rounded" value={currentData.familyCareLeaveHours} onChange={e=>updateCurrentData('familyCareLeaveHours',e.target.value)} onFocus={e=>e.target.select()} /></div>
+                                                </div>
+                                            </div>
+                                            <div><label className="text-xs text-slate-500">其他扣款 (金額)</label><input type="number" className="w-full p-2 border rounded text-red-600 font-mono" value={currentData.otherDeduct} onChange={e=>updateCurrentData('otherDeduct',e.target.value)} onFocus={e=>e.target.select()} /></div>
+                                        </div>
+
+                                        <div className="space-y-3">
+                                            <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">不扣薪假別 (純紀錄)</div>
+                                            <div className="grid grid-cols-3 gap-2">
+                                                <div><label className="text-xs text-slate-500">特休</label><input type="number" className="w-full p-2 border rounded bg-slate-50" value={currentData.specialLeaveHours} onChange={e=>updateCurrentData('specialLeaveHours',e.target.value)} /></div>
+                                                <div><label className="text-xs text-slate-500">補休</label><input type="number" className="w-full p-2 border rounded bg-slate-50" value={currentData.compLeaveHours} onChange={e=>updateCurrentData('compLeaveHours',e.target.value)} /></div>
+                                                <div><label className="text-xs text-slate-500">公假</label><input type="number" className="w-full p-2 border rounded bg-slate-50" value={currentData.officialLeaveHours} onChange={e=>updateCurrentData('officialLeaveHours',e.target.value)} /></div>
+                                                <div><label className="text-xs text-slate-500">婚假</label><input type="number" className="w-full p-2 border rounded bg-slate-50" value={currentData.weddingLeaveHours} onChange={e=>updateCurrentData('weddingLeaveHours',e.target.value)} /></div>
+                                                <div><label className="text-xs text-slate-500">喪假</label><input type="number" className="w-full p-2 border rounded bg-slate-50" value={currentData.funeralLeaveHours} onChange={e=>updateCurrentData('funeralLeaveHours',e.target.value)} /></div>
+                                                <div><label className="text-xs text-slate-500">產檢</label><input type="number" className="w-full p-2 border rounded bg-slate-50" value={currentData.prenatalLeaveHours} onChange={e=>updateCurrentData('prenatalLeaveHours',e.target.value)} /></div>
+                                                <div><label className="text-xs text-slate-500">陪產</label><input type="number" className="w-full p-2 border rounded bg-slate-50" value={currentData.paternityLeaveHours} onChange={e=>updateCurrentData('paternityLeaveHours',e.target.value)} /></div>
+                                                <div><label className="text-xs text-slate-500">產假</label><input type="number" className="w-full p-2 border rounded bg-slate-50" value={currentData.maternityLeaveHours} onChange={e=>updateCurrentData('maternityLeaveHours',e.target.value)} /></div>
+                                                <div><label className="text-xs text-slate-500">祭儀</label><input type="number" className="w-full p-2 border rounded bg-slate-50" value={currentData.ritualLeaveHours} onChange={e=>updateCurrentData('ritualLeaveHours',e.target.value)} /></div>
+                                            </div>
+                                        </div>
+
+                                        <div className="space-y-3">
+                                            <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">勞退自提</div>
+                                            <div><label className="text-xs text-slate-500">自提比例 (%)</label><input type="number" className="w-full p-2 border rounded" value={currentData.pensionSelfRate} onChange={e=>updateCurrentData('pensionSelfRate',e.target.value)} onFocus={e=>e.target.select()} placeholder="例如: 6" /></div>
+                                        </div>
+
+                                        <div className="space-y-3">
+                                            <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">備註</div>
+                                            <textarea className="w-full p-2 border rounded h-20 text-sm" value={currentData.note} onChange={e=>updateCurrentData('note',e.target.value)} placeholder="顯示於薪資單底部..."></textarea>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="col-span-7 bg-slate-500 rounded-xl shadow-inner p-8 overflow-auto flex justify-center relative">
+                                {!selectedEmpId || !result ? (
+                                    <div className="text-white opacity-50 self-center">請選擇行政人員以預覽薪資單</div>
+                                ) : (
+                                    <div className="relative">
+                                        <div className="absolute -top-12 right-0 flex gap-2">
+                                            <button onClick={handleDownloadJPG} className="bg-green-500 text-white px-4 py-2 rounded shadow hover:bg-green-600 flex items-center gap-2 text-sm font-bold">
+                                                <ImageDown className="w-4 h-4"/> 下載本頁 JPG
+                                            </button>
+                                        </div>
+                                        <div ref={previewRef} className="salary-slip shadow-2xl scale-[0.85] origin-top">
+                                            <div dangerouslySetInnerHTML={{__html: getSalarySlipHTML(result).replace(/<div class="salary-slip"[^>]*>|<\/div>$/g, '')}} />
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </main>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<PayrollSystem />);
+    </script>
+</body>
+</html>

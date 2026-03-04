@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>光祐長照 ERP - 系統總入口</title>
+    
+    <script type="module" src="config.js"></script>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Noto Sans TC', sans-serif; }
+        .glass-panel { background: rgba(255, 255, 255, 0.08); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.1); }
+        .glass-input { background: rgba(0, 0, 0, 0.4); border: 1px solid rgba(255, 255, 255, 0.2); color: white; }
+        .glass-input:focus { border-color: #3b82f6; outline: none; background: rgba(0, 0, 0, 0.6); }
+        .animate-fade-in { animation: fadeIn 0.6s ease-out forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes blob { 0% { transform: translate(0px, 0px) scale(1); } 33% { transform: translate(30px, -50px) scale(1.1); } 66% { transform: translate(-20px, 20px) scale(0.9); } 100% { transform: translate(0px, 0px) scale(1); } }
+        .animate-blob { animation: blob 7s infinite; }
+        .btn-hover-effect { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .btn-hover-effect:active { transform: scale(0.95); }
+    </style>
+
+    <script type="module">
+        import { getDoc, doc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+        import { signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+
+        let auth, db;
+        let targetUrl = '';
+        // 預設權限表，避免讀取失敗時報錯
+        let systemSettings = { allowedProxies: [], allowedSalary: [], allowedAssessment: [], allowedAccounting: [], allowedAdmin: [] };
+
+        // 等待 config.js 初始化
+        const checkInit = setInterval(() => {
+            if (window.auth && window.db) {
+                clearInterval(checkInit);
+                auth = window.auth;
+                db = window.db;
+                loadSystemSettings(); // 預先載入權限設定
+            }
+        }, 100);
+
+        async function loadSystemSettings() {
+            try {
+                // 讀取這張全域設定表，看看誰被勾選了什麼權限
+                const docSnap = await getDoc(doc(db, "system_settings", "config"));
+                if(docSnap.exists()) systemSettings = { ...systemSettings, ...docSnap.data() };
+            } catch(e) { console.warn("設定讀取失敗", e); }
+        }
+
+        window.openLogin = openLogin;
+        window.closeLogin = closeLogin;
+        window.handleLogin = handleLogin;
+        // 員工入口直接跳轉，不需要在這裡驗證
+        window.goToStaff = () => window.location.href = 'staff_portal.html';
+
+        function openLogin(url, title) {
+            targetUrl = url;
+            document.getElementById('modal-title').innerText = `登入以進入：${title}`;
+            document.getElementById('login-modal').classList.remove('hidden');
+            
+            // 自動聚焦
+            if(document.getElementById('login-code').value) {
+                document.getElementById('login-password').focus();
+            } else {
+                document.getElementById('login-code').focus();
+            }
+        }
+
+        function closeLogin() {
+            document.getElementById('login-modal').classList.add('hidden');
+            document.getElementById('login-password').value = '';
+        }
+
+        async function handleLogin(e) {
+            e.preventDefault();
+            const code = document.getElementById('login-code').value.trim();
+            const pwd = document.getElementById('login-password').value.trim();
+            const btn = document.getElementById('btn-login');
+            
+            if (!code || !pwd) return alert("請輸入完整資訊");
+            const email = code.includes('@') ? code : `${code}@kuangyou.internal`;
+
+            try {
+                btn.innerText = "驗證權限中...";
+                btn.disabled = true;
+                btn.classList.add('opacity-50');
+
+                // 1. Firebase 帳密驗證
+                const userCredential = await signInWithEmailAndPassword(auth, email, pwd);
+                const uid = userCredential.user.uid;
+
+                // 2. 讀取個人資料 (確認角色)
+                const docSnap = await getDoc(doc(db, "employees", uid));
+                
+                if (docSnap.exists()) {
+                    const userData = docSnap.data();
+                    if (userData.resignDate) throw new Error("此帳號已離職");
+
+                    // 3. 寫入 Session (供後台使用)
+                    sessionStorage.setItem('kuangyou_user', JSON.stringify({
+                        uid: uid, name: userData.name, role: userData.role, code: userData.code
+                    }));
+                    
+                    // 記住帳號方便下次登入
+                    localStorage.setItem('last_login_code', code);
+
+                    // 4. 進行門禁檢查
+                    checkPermissionAndRedirect(userData, targetUrl);
+                } else {
+                    throw new Error("無員工資料");
+                }
+            } catch (error) {
+                console.error(error);
+                let msg = error.message;
+                if(error.code === 'auth/invalid-credential') msg = "帳號或密碼錯誤";
+                alert(`❌ 登入失敗: ${msg}`);
+                
+                btn.innerText = "確認登入";
+                btn.disabled = false;
+                btn.classList.remove('opacity-50');
+            }
+        }
+
+        function checkPermissionAndRedirect(user, url) {
+            let allowed = false;
+            const role = user.role;
+            const uid = user.id || auth.currentUser.uid;
+
+            // --- 規則 1: 老闆與總管 無敵 ---
+            if (role === 'super_admin' || role === 'manager') allowed = true;
+            
+            // --- 規則 2: 行政人員 (admin) 的細部檢查 ---
+            if (role === 'admin') {
+                
+                // (A) 行政後台：預設可進，或看是否有被勾選 (根據您在 attendance_admin 的設定)
+                if (url === 'admin_portal.html') {
+                    // 如果您希望 admin 預設就能進，保持 true
+                    // 如果希望連這都要勾選才行，改成： if (systemSettings.allowedAdmin?.includes(uid)) allowed = true;
+                    allowed = true; 
+                }
+                
+                // (B) 考勤後台：必須放行，不然沒人能去幫大家開權限 (除非是第一次設定)
+                if (url === 'attendance_admin.html') {
+                    allowed = true;
+                }
+
+                // (C) ★★★ 財務後台：嚴格檢查 allowedAccounting ★★★
+                if (url === 'accounting_portal.html') {
+                    if (systemSettings.allowedAccounting?.includes(uid)) {
+                        allowed = true;
+                    }
+                }
+            }
+
+            if (allowed) {
+                window.location.href = url;
+            } else {
+                alert(`⛔ 權限不足！\n\n您的身分 (${role}) 未被授權進入此區域。\n請聯繫管理員開通權限。`);
+                const btn = document.getElementById('btn-login');
+                btn.innerText = "確認登入";
+                btn.disabled = false;
+                btn.classList.remove('opacity-50');
+            }
+        }
+        
+        // 自動填入上次帳號
+        window.onload = () => {
+            const last = localStorage.getItem('last_login_code');
+            if(last) document.getElementById('login-code').value = last;
+        }
+    </script>
+</head>
+<body class="bg-slate-900 min-h-screen flex flex-col items-center p-4 text-white relative overflow-hidden">
+
+    <div class="fixed top-0 left-0 w-full h-full overflow-hidden z-0 pointer-events-none">
+        <div class="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-blue-600/30 rounded-full mix-blend-screen filter blur-[100px] animate-blob"></div>
+        <div class="absolute top-[20%] right-[-10%] w-[400px] h-[400px] bg-purple-600/30 rounded-full mix-blend-screen filter blur-[100px] animate-blob" style="animation-delay: 2s"></div>
+        <div class="absolute bottom-[-10%] left-[20%] w-[600px] h-[600px] bg-emerald-600/20 rounded-full mix-blend-screen filter blur-[100px] animate-blob" style="animation-delay: 4s"></div>
+    </div>
+
+    <div class="text-center mt-8 mb-8 z-10 animate-fade-in">
+        <div class="inline-block border border-white/20 bg-white/5 rounded-full px-4 py-1 text-xs font-mono text-blue-300 mb-4 backdrop-blur-sm">KUANG-YOU ERP v17.0</div>
+        <h1 class="text-4xl md:text-6xl font-black tracking-tight text-white mb-2 drop-shadow-xl">光祐長照</h1>
+        <p class="text-slate-400 text-sm md:text-base font-medium tracking-wide">全方位機構資源管理系統</p>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-6 w-full max-w-6xl z-10 animate-fade-in" style="animation-delay: 0.1s;">
+        
+        <div onclick="goToStaff()" class="lg:col-span-6 group glass-panel rounded-[2rem] p-8 flex flex-col justify-between min-h-[280px] cursor-pointer hover:bg-white/10 hover:border-blue-400/50 btn-hover-effect relative overflow-hidden">
+            <div class="absolute right-[-20px] top-[-20px] w-40 h-40 bg-blue-500/20 rounded-full blur-3xl group-hover:bg-blue-500/40 transition-all duration-500"></div>
+            <div class="relative">
+                <div class="bg-blue-500 w-16 h-16 rounded-2xl flex items-center justify-center text-3xl shadow-lg shadow-blue-500/30 mb-6 group-hover:scale-110 transition-transform duration-300">📱</div>
+                <h2 class="text-3xl font-bold text-white mb-2">員工入口 (打卡)</h2>
+                <p class="text-blue-200 text-sm font-medium">Staff Portal</p>
+            </div>
+            <div class="relative mt-8">
+                <div class="flex flex-wrap gap-2">
+                    <span class="px-3 py-1 bg-white/10 rounded-full text-xs text-white border border-white/10">上下班打卡</span>
+                    <span class="px-3 py-1 bg-white/10 rounded-full text-xs text-white border border-white/10">請假申請</span>
+                </div>
+            </div>
+        </div>
+
+        <div onclick="openLogin('admin_portal.html', '行政作業中心')" class="lg:col-span-3 group glass-panel rounded-[2rem] p-6 flex flex-col justify-between min-h-[280px] cursor-pointer hover:bg-white/10 hover:border-purple-400/50 btn-hover-effect">
+            <div>
+                <div class="bg-purple-600/80 w-12 h-12 rounded-xl flex items-center justify-center text-2xl shadow-lg shadow-purple-500/30 mb-4 group-hover:scale-110 transition-transform">📂</div>
+                <h2 class="text-xl font-bold text-white mb-1">行政作業</h2>
+                <p class="text-purple-200 text-xs">Admin Center</p>
+            </div>
+            <div class="space-y-2 mt-4 text-xs text-slate-300">
+                <div>零用金流水帳</div><div>帳單與請款</div><div>收款與派單</div>
+            </div>
+        </div>
+
+        <div onclick="openLogin('attendance_admin.html', '考勤管理後台')" class="lg:col-span-3 group glass-panel rounded-[2rem] p-6 flex flex-col justify-between min-h-[280px] cursor-pointer hover:bg-white/10 hover:border-orange-400/50 btn-hover-effect">
+            <div>
+                <div class="bg-orange-500/80 w-12 h-12 rounded-xl flex items-center justify-center text-2xl shadow-lg shadow-orange-500/30 mb-4 group-hover:scale-110 transition-transform">📊</div>
+                <h2 class="text-xl font-bold text-white mb-1">考勤管理</h2>
+                <p class="text-orange-200 text-xs">Attendance Admin</p>
+            </div>
+            <div class="space-y-2 mt-4 text-xs text-slate-300">
+                <div>打卡紀錄補登</div><div>請假加班審核</div><div>權限設定</div>
+            </div>
+        </div>
+
+        <div onclick="openLogin('accounting_portal.html', '財務會計總部')" class="lg:col-span-12 group glass-panel rounded-[2rem] p-8 flex items-center justify-between cursor-pointer hover:bg-white/10 hover:border-emerald-400/50 btn-hover-effect relative overflow-hidden">
+            <div class="absolute left-[-20px] bottom-[-20px] w-64 h-64 bg-emerald-500/10 rounded-full blur-3xl group-hover:bg-emerald-500/20 transition-all duration-500"></div>
+            <div class="flex items-center gap-6 relative z-10">
+                <div class="bg-emerald-600 w-14 h-14 rounded-2xl flex items-center justify-center text-3xl shadow-lg shadow-emerald-500/30">💰</div>
+                <div><h2 class="text-2xl font-bold text-white">財務會計總部</h2><p class="text-emerald-200 text-sm">Financial & Accounting HQ</p></div>
+            </div>
+            <div class="hidden md:flex gap-8 relative z-10"><div class="text-center"><div class="text-xs text-slate-400 mb-1">會計總帳</div><div class="text-white font-bold">Ledger</div></div><div class="text-center"><div class="text-xs text-slate-400 mb-1">薪資結算</div><div class="text-white font-bold">Payroll</div></div><div class="text-center"><div class="text-xs text-slate-400 mb-1">經營報表</div><div class="text-white font-bold">Reports</div></div></div>
+        </div>
+    </div>
+
+    <div id="login-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md hidden transition-opacity duration-300">
+        <div class="glass-panel bg-slate-900/90 p-8 rounded-3xl w-full max-w-sm relative transform transition-all scale-100 shadow-2xl border border-white/20">
+            <button onclick="closeLogin()" class="absolute top-5 right-5 text-slate-400 hover:text-white text-xl transition-colors">&times;</button>
+            <div class="text-center mb-8"><div class="inline-block p-3 bg-blue-500/20 rounded-full mb-3 text-2xl">🔐</div><h3 class="text-xl font-bold text-white mb-1" id="modal-title">系統登入</h3><p class="text-slate-400 text-xs">管理權限驗證</p></div>
+            <form onsubmit="handleLogin(event)" class="space-y-5">
+                <div><label class="text-xs font-bold text-slate-300 ml-1 mb-1.5 block">員工編號</label><input type="text" id="login-code" class="w-full glass-input rounded-xl p-3 text-center text-lg font-bold tracking-widest placeholder-slate-600 focus:ring-2 focus:ring-blue-500 transition-all"></div>
+                <div><label class="text-xs font-bold text-slate-300 ml-1 mb-1.5 block">密碼</label><input type="password" id="login-password" class="w-full glass-input rounded-xl p-3 text-center text-lg font-bold placeholder-slate-600 focus:ring-2 focus:ring-blue-500 transition-all"></div>
+                <button type="submit" id="btn-login" class="w-full bg-gradient-to-r from-blue-600 to-emerald-600 hover:from-blue-500 hover:to-emerald-500 text-white font-bold py-3.5 rounded-xl shadow-lg mt-2 transition-all transform hover:scale-[1.02] active:scale-95">確認登入</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="mt-12 text-slate-600 text-[10px] z-10 font-mono">&copy; 2026 Kuang-You Home Care System.</div>
+</body>
+</html>

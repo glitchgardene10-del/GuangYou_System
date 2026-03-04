@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>應收帳款管理 (v13.9.1 隱私列印版)</title>
+    
+    <script src="auth-guard.js"></script>
+    <script type="module" src="config.js"></script>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dayjs/1.11.10/dayjs.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+
+    <style>body { font-family: 'Noto Sans TC', sans-serif; background-color: #f1f5f9; }</style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef } = React;
+        const SAFETY_PASSWORD = "8888"; 
+
+        const maskName = (name) => {
+            if (!name) return "";
+            const len = name.length;
+            if (len === 2) return name[0] + "○"; 
+            if (len === 3) return name[0] + "○" + name[2]; 
+            return name[0] + "○○" + name.substring(3); 
+        };
+
+        const IncomeApp = () => {
+            const [isSystemReady, setIsSystemReady] = useState(false);
+            const [currentUser, setCurrentUser] = useState({});
+            const [isManager, setIsManager] = useState(false);
+            const [userEmail, setUserEmail] = useState('');
+            const BOSS_EMAILS = ["admin@kuangyou.internal"]; 
+
+            const [activeTab, setActiveTab] = useState('user_pay');
+            const [currentMonth, setCurrentMonth] = useState(dayjs().format('YYYY-MM'));
+            const [receivables, setReceivables] = useState([]);
+            const [caregivers, setCaregivers] = useState([]);
+            
+            const [clientPrefs, setClientPrefs] = useState({}); 
+
+            const [loading, setLoading] = useState(false);
+            const [bankOptions, setBankOptions] = useState([]);
+            const [filterCollectionType, setFilterCollectionType] = useState('all'); 
+            const [printCaregiver, setPrintCaregiver] = useState('all');
+            
+            const [showGovModal, setShowGovModal] = useState(false);
+            const [govForm, setGovForm] = useState({ b: '', g: '', s: '', t: '' });
+            const [showPasteModal, setShowPasteModal] = useState(false);
+            const [pasteContent, setPasteContent] = useState('');
+            
+            const [confirmModal, setConfirmModal] = useState({ show: false, type: '', data: null });
+            const [confirmAmount, setConfirmAmount] = useState('');
+            const [selectedBankCode, setSelectedBankCode] = useState('');
+
+            const [userCollectModal, setUserCollectModal] = useState({ show: false, item: null, method: 'cash', actualAmount: '', useSubsidy: true });
+            const [printModal, setPrintModal] = useState({ show: false, title: '', showAmount: true });
+            
+            const backLink = currentUser.role === 'manager' ? 'accounting_portal.html' : 'admin_portal.html';
+
+            useEffect(() => {
+                const timer = setInterval(() => {
+                    if (window.db && window.auth) {
+                        clearInterval(timer);
+                        setIsSystemReady(true);
+                        try {
+                            const session = sessionStorage.getItem('kuangyou_user');
+                            if (session) setCurrentUser(JSON.parse(session));
+                        } catch(e){}
+                    }
+                }, 100);
+                return () => clearInterval(timer);
+            }, []);
+
+            useEffect(() => { 
+                if (!isSystemReady) return;
+                const unsubscribe = window.auth.onAuthStateChanged((user) => {
+                    if (user) {
+                        setUserEmail(user.email);
+                        if (BOSS_EMAILS.includes(user.email)) setIsManager(true);
+                        else setIsManager(false);
+                    }
+                });
+                fetchCaregivers(); 
+                fetchClientPrefs(); 
+                fetchBankSubjects(); 
+                fetchData();
+                return () => unsubscribe();
+            }, [isSystemReady]); 
+
+            useEffect(() => { if(isSystemReady) fetchData(); }, [currentMonth, activeTab]);
+
+            const fetchClientPrefs = async () => {
+                try {
+                    const docSnap = await window.getDoc(window.doc(window.db, "system_settings", "client_billing_prefs"));
+                    if(docSnap.exists()) setClientPrefs(docSnap.data());
+                } catch(e) {}
+            };
+
+            const updatePref = async (caseNo, updates) => {
+                const mapRef = window.doc(window.db, "system_settings", "client_billing_prefs");
+                try {
+                    await window.setDoc(mapRef, { [caseNo]: updates }, { merge: true });
+                    setClientPrefs(prev => ({
+                        ...prev,
+                        [caseNo]: { ...(prev[caseNo] || {}), ...updates }
+                    }));
+                } catch(e) {}
+            };
+
+            const fetchBankSubjects = async () => {
+                try {
+                    const q = window.query(window.collection(window.db, "accounting_accounts"), window.orderBy("code"));
+                    const snap = await window.getDocs(q);
+                    const banks = [];
+                    snap.forEach(d => {
+                        const data = d.data();
+                        const codeStr = String(data.code);
+                        if (data.code && (codeStr.startsWith('1101') || codeStr.startsWith('1102') || codeStr.startsWith('1103') || codeStr.startsWith('1104') || codeStr.startsWith('1105'))) {
+                            banks.push({ code: data.code, name: data.name });
+                        }
+                    });
+                    if(banks.length === 0) banks.push({ code: '1102', name: '銀行存款 (預設)' });
+                    setBankOptions(banks);
+                } catch(e) {}
+            };
+
+            const fetchCaregivers = async () => {
+                try {
+                    const q = window.query(window.collection(window.db, "employees"), window.where("role", "==", "caregiver"));
+                    const snap = await window.getDocs(q);
+                    const list = [];
+                    snap.forEach(d => {
+                        const data = d.data();
+                        if (!data.resignDate) list.push({ id: d.id, name: data.name });
+                    });
+                    list.sort((a, b) => a.name.localeCompare(b.name, "zh-Hant"));
+                    setCaregivers(list);
+                } catch(e) {}
+            };
+
+            const fetchData = async () => {
+                setLoading(true);
+                try {
+                    const q = window.query(
+                        window.collection(window.db, "income_receivables"),
+                        window.where("month", "==", currentMonth),
+                        window.where("type", "==", activeTab === 'user_pay' ? 'user' : 'gov')
+                    );
+                    const snap = await window.getDocs(q);
+                    const list = [];
+                    snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+                    list.sort((a, b) => (a.caseNo || "").localeCompare(b.caseNo || "", undefined, { numeric: true }));
+                    setReceivables(list);
+                } catch (e) {}
+                setLoading(false);
+            };
+
+            const processPaste = async () => {
+                if(!pasteContent.trim()) return alert("請先貼上資料！");
+                setLoading(true);
+                try {
+                    const rows = pasteContent.trim().split('\n');
+                    const batch = window.writeBatch(window.db);
+                    let count = 0;
+                    
+                    rows.forEach((line) => {
+                        const cols = line.split('\t'); 
+                        if (cols.length < 12) return;
+                        const caseNo = cols[0] ? cols[0].trim() : "";
+                        const clientName = cols[1] ? maskName(cols[1].trim()) : ""; 
+                        const amount = Number(cols[11] ? cols[11].replace(/[^0-9.-]+/g, "") : "0");
+
+                        if (caseNo && !isNaN(amount) && !caseNo.includes("案號") && !caseNo.includes("Case")) {
+                            const pref = clientPrefs[caseNo] || {};
+                            const assignedCaregiverId = pref.caregiverId || '';
+                            const assignedCaregiverName = (assignedCaregiverId === 'supervisor') ? '督導親收' : (caregivers.find(c=>c.id===assignedCaregiverId)?.name || '');
+                            const collectionType = pref.collectionType || 'caregiver_collect';
+
+                            const ref = window.doc(window.collection(window.db, "income_receivables"));
+                            batch.set(ref, {
+                                month: currentMonth, type: 'user', caseNo, clientName, amount,
+                                status: 'pending', collectionType, 
+                                caregiverId: assignedCaregiverId, caregiverName: assignedCaregiverName,
+                                createdAt: new Date().toISOString()
+                            });
+                            count++;
+                        }
+                    });
+
+                    if (count > 0) {
+                        await batch.commit();
+                        alert(`✅ 成功匯入 ${count} 筆！`);
+                        setShowPasteModal(false); setPasteContent(''); fetchData();
+                    } else {
+                        alert("⚠️ 找不到有效資料！請確認複製範圍正確。");
+                    }
+                } catch(e) { alert("處理失敗：" + e.message); }
+                setLoading(false);
+            };
+
+            const updateCollectionType = async (item, newType) => {
+                await window.updateDoc(window.doc(window.db, "income_receivables", item.id), { collectionType: newType });
+                await updatePref(item.caseNo, { collectionType: newType });
+                fetchData();
+            };
+
+            const updateCaregiver = async (item, newCaregiverId) => {
+                const newCaregiverName = (newCaregiverId === 'supervisor') ? '督導親收' : (caregivers.find(c=>c.id===newCaregiverId)?.name || '');
+                await window.updateDoc(window.doc(window.db, "income_receivables", item.id), { caregiverId: newCaregiverId, caregiverName: newCaregiverName });
+                await updatePref(item.caseNo, { caregiverId: newCaregiverId });
+                fetchData();
+            };
+
+            const handleZeroAmount = async (item) => {
+                if(!confirm(`確定將【${item.caseNo}】歸檔結案？\n(此筆為 $0，不會產生任何會計傳票)`)) return;
+                setLoading(true);
+                try {
+                    await window.updateDoc(window.doc(window.db, "income_receivables", item.id), {
+                        status: 'paid', paymentMethod: 'zero', actualAmount: 0, paidAt: new Date().toISOString(), confirmer: currentUser.name
+                    });
+                    fetchData();
+                } catch(e) { alert("失敗: " + e.message); }
+                setLoading(false);
+            };
+
+            const handleFullSubsidy = async (item) => {
+                if(!confirm(`確定要將【${item.caseNo}】全額由庫存墊付結案？\n\n系統將自動產生 5298雜項支出 傳票。`)) return;
+                setLoading(true);
+                try {
+                    const batch = window.writeBatch(window.db);
+                    const vJournalRef = window.doc(window.collection(window.db, "accounting_journal"));
+                    batch.set(vJournalRef, {
+                        date: dayjs().format('YYYY-MM-DD'), description: `[墊付核銷] 案號 ${item.caseNo} ${item.clientName}`, source: 'AR_SUBSIDY',
+                        entries: [ 
+                            { type: 'debit', code: '1101', name: '庫存現金', amount: item.amount }, 
+                            { type: 'credit', code: '4201', name: '自費服務收入', amount: item.amount },
+                            { type: 'debit', code: '5298', name: '雜項支出-費用', amount: item.amount }, 
+                            { type: 'credit', code: '1101', name: '庫存現金', amount: item.amount }
+                        ],
+                        totalAmount: item.amount * 2, createdAt: new Date().toISOString(), recorder: currentUser.name
+                    });
+                    batch.update(window.doc(window.db, "income_receivables", item.id), {
+                        status: 'paid', paymentMethod: 'none', actualAmount: 0, paidAt: new Date().toISOString(), 
+                        confirmer: currentUser.name, virtualJournalId: vJournalRef.id
+                    });
+                    await batch.commit();
+                    alert("✅ 全額墊付結案成功！"); fetchData();
+                } catch(e) { alert("失敗: " + e.message); }
+                setLoading(false);
+            };
+
+            const processUserCollection = async () => {
+                const { item, method, useSubsidy } = userCollectModal;
+                const amt = Number(userCollectModal.actualAmount) || 0;
+                const diff = item.amount - amt;
+
+                if (method === 'bank' && amt > 0 && !selectedBankCode) return alert("請選擇存入銀行");
+                if (amt < 0) return alert("金額不可小於0");
+
+                setLoading(true);
+                try {
+                    const batch = window.writeBatch(window.db);
+                    let linkedExpenseId = null;
+                    let linkedJournalId = null;
+                    let virtualJournalId = null;
+
+                    if (amt > 0) {
+                        if (method === 'cash') {
+                            const expenseRef = window.doc(window.collection(window.db, "accounting_expenses"));
+                            batch.set(expenseRef, {
+                                date: dayjs().format('YYYY-MM-DD'), type: 'income', item: `[收款] 案號 ${item.caseNo} ${item.clientName}`,
+                                amount: amt, category: '服務收入(現金)', payer: '1105', 
+                                note: `經手人: ${currentUser.name}`, recorder: currentUser.name, status: 'locked', createdAt: new Date().toISOString()
+                            });
+                            linkedExpenseId = expenseRef.id;
+
+                            const journalRef = window.doc(window.collection(window.db, "accounting_journal"));
+                            batch.set(journalRef, {
+                                date: dayjs().format('YYYY-MM-DD'), description: `收到自費款 (案號 ${item.caseNo} 現金)`, source: 'AR_USER_COLLECT_CASH',
+                                entries: [ { type: 'debit', code: '1105', name: '零用金', amount: amt }, { type: 'credit', code: '4201', name: '自費服務收入', amount: amt } ],
+                                totalAmount: amt, createdAt: new Date().toISOString(), recorder: currentUser.name
+                            });
+                            linkedJournalId = journalRef.id;
+
+                            const pettyRef = window.doc(window.db, "system_settings", "petty_cash");
+                            batch.set(pettyRef, { balance: window.increment(amt) }, { merge: true });
+                        } else if (method === 'bank') {
+                            const journalRef = window.doc(window.collection(window.db, "accounting_journal"));
+                            batch.set(journalRef, {
+                                date: dayjs().format('YYYY-MM-DD'), description: `入帳 (案號 ${item.caseNo} ${item.clientName})`, source: 'AR_USER',
+                                entries: [ { type: 'debit', code: selectedBankCode, name: '銀行存款', amount: amt }, { type: 'credit', code: '4201', name: '自費服務收入', amount: amt } ],
+                                totalAmount: amt, createdAt: new Date().toISOString(), recorder: currentUser.name
+                            });
+                            linkedJournalId = journalRef.id;
+                            localStorage.setItem('last_bank_user', selectedBankCode);
+                        }
+                    }
+
+                    if (diff > 0 && useSubsidy) {
+                        const vJournalRef = window.doc(window.collection(window.db, "accounting_journal"));
+                        batch.set(vJournalRef, {
+                            date: dayjs().format('YYYY-MM-DD'), description: `[墊付核銷] 案號 ${item.caseNo} ${item.clientName}`, source: 'AR_SUBSIDY',
+                            entries: [ 
+                                { type: 'debit', code: '1101', name: '庫存現金', amount: diff }, 
+                                { type: 'credit', code: '4201', name: '自費服務收入', amount: diff },
+                                { type: 'debit', code: '5298', name: '雜項支出-費用', amount: diff }, 
+                                { type: 'credit', code: '1101', name: '庫存現金', amount: diff }
+                            ],
+                            totalAmount: diff * 2, createdAt: new Date().toISOString(), recorder: currentUser.name
+                        });
+                        virtualJournalId = vJournalRef.id;
+                    }
+
+                    batch.update(window.doc(window.db, "income_receivables", item.id), {
+                        status: 'paid', paymentMethod: method, actualAmount: amt, paidAt: new Date().toISOString(), 
+                        receiver: currentUser.name, confirmer: currentUser.name,
+                        linkedExpenseId, linkedJournalId, virtualJournalId
+                    });
+
+                    await batch.commit();
+                    alert("✅ 入帳結案成功！");
+                    setUserCollectModal({show: false, item: null, method: 'cash', actualAmount: '', useSubsidy: true});
+                    fetchData();
+                } catch(e) { alert("操作失敗: " + e.message); }
+                setLoading(false);
+            };
+
+            const handleBankReport = async (item) => {
+                if (!confirm(`確認案家【${item.caseNo}】已匯款？`)) return;
+                await window.updateDoc(window.doc(window.db, "income_receivables", item.id), {
+                    status: 'verifying', reportTime: new Date().toISOString(), reporter: currentUser.name
+                });
+                fetchData();
+            };
+
+            const openConfirmModal = (item, type) => {
+                if (!isManager) return alert("⛔ 權限不足：只有老闆可以確認入帳。");
+                const storageKey = type === 'user' ? 'last_bank_user' : 'last_bank_gov';
+                const lastBank = localStorage.getItem(storageKey) || (bankOptions[0]?.code || '');
+                setConfirmAmount(item.amount); setSelectedBankCode(lastBank);
+                setConfirmModal({ show: true, type, data: item });
+            };
+
+            const executeConfirmGov = async () => {
+                const { data } = confirmModal;
+                const amt = Number(confirmAmount);
+                if (!amt || !selectedBankCode) return alert("請輸入正確金額與銀行");
+                setLoading(true);
+                try {
+                    const batch = window.writeBatch(window.db);
+                    const jRef = window.doc(window.collection(window.db, "accounting_journal"));
+                    const diff = data.amount - amt;
+                    let entries = [{ type: 'debit', code: selectedBankCode, name: '銀行存款', amount: amt }];
+                    if(diff > 0) entries.push({ type: 'debit', code: '4109', name: '核銷折讓', amount: diff });
+                    entries.push({ type: 'credit', code: '4101', name: '長照收入', amount: data.amount });
+                    
+                    batch.set(jRef, { 
+                        date: dayjs().format('YYYY-MM-DD'), description: `入帳 ${data.title}`, 
+                        source: 'AR_GOV', entries, totalAmount: data.amount, createdAt: new Date().toISOString(), recorder: currentUser.name
+                    });
+                    batch.update(window.doc(window.db, "income_receivables", data.id), { 
+                        status: 'paid', paymentMethod: 'bank', actualAmount: amt, paidAt: new Date().toISOString(), confirmer: currentUser.name, linkedJournalId: jRef.id 
+                    });
+                    await batch.commit();
+                    localStorage.setItem('last_bank_gov', selectedBankCode);
+                    alert("✅ 入帳成功！"); setConfirmModal({ show: false, type: '', data: null }); fetchData();
+                } catch(e) { alert("入帳失敗"); }
+                setLoading(false);
+            };
+
+            const handleUndo = async (item) => {
+                if (item.paymentMethod === 'bank' && !isManager) return alert("⛔ 權限不足");
+                if (!confirm(`確定撤銷？`)) return;
+                setLoading(true);
+                try {
+                    const batch = window.writeBatch(window.db);
+                    const itemRef = window.doc(window.db, "income_receivables", item.id);
+                    batch.update(itemRef, {
+                        status: 'pending', paymentMethod: window.deleteField(), actualAmount: window.deleteField(), paidAt: window.deleteField(),
+                        linkedExpenseId: window.deleteField(), linkedJournalId: window.deleteField(), virtualJournalId: window.deleteField(), confirmer: window.deleteField(), receiver: window.deleteField()
+                    });
+                    if (item.paymentMethod === 'cash') {
+                        batch.update(window.doc(window.db, "system_settings", "petty_cash"), { balance: window.increment(-item.amount) });
+                        if (item.linkedExpenseId) batch.delete(window.doc(window.db, "accounting_expenses", item.linkedExpenseId));
+                    }
+                    if (item.linkedJournalId) batch.delete(window.doc(window.db, "accounting_journal", item.linkedJournalId));
+                    if (item.virtualJournalId) batch.delete(window.doc(window.db, "accounting_journal", item.virtualJournalId)); 
+                    await batch.commit(); alert("✅ 已撤銷"); fetchData();
+                } catch(e) { alert("撤銷失敗"); }
+                setLoading(false);
+            };
+
+            const openPrintModal = () => {
+                setPrintModal({ show: true, title: `光祐長照 - ${currentMonth} ${activeTab==='user_pay'?'民眾自付額':'政府核銷'}收款單`, showAmount: true });
+            };
+
+            const executePrint = () => {
+                let targetName = '全體';
+                if (printCaregiver !== 'all') {
+                    if (printCaregiver === 'supervisor') targetName = '督導親收';
+                    else targetName = caregivers.find(c=>c.id===printCaregiver)?.name || '未知';
+                }
+
+                const itemsToPrint = receivables
+                    .filter(r => r.status !== 'paid') 
+                    .filter(r => filterCollectionType === 'all' || r.collectionType === filterCollectionType)
+                    .filter(r => printCaregiver === 'all' || r.caregiverId === printCaregiver);
+
+                if (itemsToPrint.length === 0) {
+                    setPrintModal({...printModal, show: false});
+                    return alert("沒有符合條件的資料可列印。");
+                }
+
+                const totalAmount = itemsToPrint.reduce((sum, item) => {
+                    if (printCaregiver !== 'all') {
+                        return item.collectionType === 'caregiver_collect' ? sum + Number(item.amount || 0) : sum;
+                    }
+                    return sum + Number(item.amount || 0);
+                }, 0);
+
+                const thAmount = printModal.showAmount ? `<th width="40%">應收金額</th>` : '';
+                
+                // ★ 修改點：印給行政總表才顯示所有金額，印給居服員時非現金項目完全留白
+                const tdAmount = (item) => {
+                    if (!printModal.showAmount) return '';
+                    if (printCaregiver === 'all') {
+                        return `<td class="amount">$${new Intl.NumberFormat().format(item.amount)}</td>`;
+                    } else {
+                        if (item.collectionType === 'caregiver_collect') {
+                            return `<td class="amount">$${new Intl.NumberFormat().format(item.amount)}</td>`;
+                        } else {
+                            // 不讓居服員知道，直接留白
+                            return `<td class="amount"></td>`;
+                        }
+                    }
+                };
+
+                const tfootAmount = printModal.showAmount ? `
+                    <tfoot>
+                        <tr>
+                            <td colspan="2" style="text-align: right; font-weight: bold;">
+                                ${printCaregiver !== 'all' ? '應收回現金總計：' : '總計應收：'}
+                            </td>
+                            <td class="amount" style="border-top: 2px solid black;">$${new Intl.NumberFormat().format(totalAmount)}</td>
+                        </tr>
+                    </tfoot>
+                ` : '';
+
+                const printContent = `
+                    <html>
+                    <head>
+                        <title>收款清單</title>
+                        <style>
+                            body { font-family: "Microsoft JhengHei", sans-serif; padding: 20px; }
+                            h1 { text-align: center; font-size: 24px; margin-bottom: 10px; }
+                            .meta { text-align: center; margin-bottom: 20px; font-size: 14px; }
+                            table { width: 100%; border-collapse: collapse; font-size: 14px; }
+                            th, td { border: 1px solid black; padding: 8px 10px; text-align: center; }
+                            th { background-color: #f0f0f0; }
+                            .amount { text-align: right; font-family: monospace; font-size: 16px; font-weight: bold; }
+                            .footer { margin-top: 30px; font-size: 12px; text-align: right; }
+                            tfoot td { background-color: #f9fafb; font-size: 16px; }
+                        </style>
+                    </head>
+                    <body>
+                        <h1>${printModal.title}</h1>
+                        <div class="meta">
+                            居服員：<b>${targetName}</b> &nbsp;&nbsp;
+                            類型：<b>${filterCollectionType === 'caregiver_collect' ? '居服員收' : (filterCollectionType === 'transfer' ? '轉帳' : (filterCollectionType === 'none' ? '無' : '全部'))}</b>
+                        </div>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th width="30%">案號</th>
+                                    <th width="30%">個案姓名</th>
+                                    ${thAmount}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${itemsToPrint.map(item => `
+                                <tr>
+                                    <td>${item.caseNo}</td>
+                                    <td>${item.clientName || ''}</td>
+                                    ${tdAmount(item)}
+                                </tr>
+                                `).join('')}
+                            </tbody>
+                            ${tfootAmount}
+                        </table>
+                        <div class="footer">列印時間：${dayjs().format('YYYY-MM-DD HH:mm')}</div>
+                    ` + '<' + '/body>' + '<' + '/html>'; 
+
+                setPrintModal({...printModal, show: false});
+                const win = window.open('', '_blank');
+                win.document.write(printContent);
+                win.document.close();
+                setTimeout(() => { win.focus(); win.print(); }, 500);
+            };
+
+            const handleBatchDelete = async () => {
+                if (!isManager) return alert("⛔ 權限不足：只有老闆帳號可以執行整筆刪除。");
+                if (receivables.length === 0) return alert("目前沒有資料可刪除");
+                const pwd = prompt(`⚠️ 警告：您即將刪除本月 (${currentMonth}) 所有資料。\n\n請輸入安全密碼以確認：`);
+                if (pwd !== SAFETY_PASSWORD) return alert("❌ 密碼錯誤！");
+                setLoading(true);
+                try {
+                    const batch = window.writeBatch(window.db);
+                    receivables.forEach(item => batch.delete(window.doc(window.db, "income_receivables", item.id)));
+                    await batch.commit();
+                    alert("✅ 已全部刪除！"); fetchData();
+                } catch (e) { alert("刪除失敗"); }
+                setLoading(false);
+            };
+
+            const handleSingleDelete = async (item) => {
+                if (!confirm(`確定要刪除這筆「${item.title || item.caseNo}」嗎？`)) return;
+                try {
+                    await window.deleteDoc(window.doc(window.db, "income_receivables", item.id));
+                    alert("✅ 已刪除"); fetchData();
+                } catch(e) { alert("刪除失敗"); }
+            };
+
+            const saveGovRecord = async () => {
+                const b = Number(govForm.b) || 0; const g = Number(govForm.g) || 0;
+                const s = Number(govForm.s) || 0; const t = Number(govForm.t) || 0;
+                const total = b + g + s + t;
+                
+                if (total <= 0) return alert("請輸入金額");
+                setLoading(true);
+                try {
+                    await window.addDoc(window.collection(window.db, "income_receivables"), {
+                        month: currentMonth, type: 'gov', title: `政府補助核銷 (${currentMonth})`, amount: total, 
+                        breakdown: { b, g, s, t }, status: 'pending', createdAt: new Date().toISOString()
+                    });
+                    alert("✅ 新增成功"); setShowGovModal(false); setGovForm({ b: '', g: '', s: '', t: '' }); fetchData();
+                } catch(e) { alert("新增失敗"); }
+                setLoading(false);
+            };
+
+            const filteredReceivables = useMemo(() => {
+                return receivables.filter(r => {
+                    const matchCollection = filterCollectionType === 'all' || r.collectionType === filterCollectionType;
+                    const matchCaregiver = printCaregiver === 'all' || r.caregiverId === printCaregiver;
+                    return matchCollection && matchCaregiver;
+                });
+            }, [receivables, filterCollectionType, printCaregiver]);
+
+            if (!isSystemReady) return <div className="h-screen flex items-center justify-center font-bold text-slate-500 animate-pulse">系統連線中...</div>;
+
+            return (
+                <div className="flex h-screen overflow-hidden">
+                    <div className="w-64 bg-slate-900 text-white flex flex-col p-4 shadow-xl shrink-0 no-print">
+                        <div className="text-2xl font-black tracking-widest mb-10 text-center">KUANG-YOU<div className="text-xs font-normal opacity-50 tracking-normal">INCOME</div></div>
+                        <nav className="flex-1 space-y-2">
+                            <button onClick={()=>setActiveTab('user_pay')} className={`w-full text-left p-3 rounded-lg transition ${activeTab==='user_pay'?'bg-blue-600 text-white':'hover:bg-slate-800 text-slate-400'}`}>👥 民眾收款</button>
+                            <button onClick={()=>setActiveTab('gov_pay')} className={`w-full text-left p-3 rounded-lg transition ${activeTab==='gov_pay'?'bg-emerald-600 text-white':'hover:bg-slate-800 text-slate-400'}`}>🏛️ 政府核銷</button>
+                        </nav>
+                        <div className="mt-auto border-t border-slate-700 pt-4">
+                            <div className="text-xs text-slate-400 mb-2">登入身份：</div>
+                            <div className={`font-bold ${isManager ? 'text-yellow-400' : 'text-slate-300'}`}>{isManager ? '👑 老闆 (Manager)' : '👤 行政人員'}</div>
+                            <div className="text-[10px] text-slate-500 mt-1 truncate">{userEmail}</div>
+                        </div>
+                        <a href={backLink} className="text-xs text-slate-500 text-center mt-4 hover:text-white pb-2">← 返回入口</a>
+                    </div>
+
+                    <div className="flex-1 bg-slate-100 overflow-auto p-8 relative">
+                        <div className="flex justify-between items-center mb-6 no-print">
+                            <div className="flex items-center gap-4">
+                                <h2 className="text-2xl font-bold text-slate-800">{activeTab==='user_pay'?'民眾自負額':'政府補助款'}</h2>
+                                <input type="month" value={currentMonth} onChange={e=>setCurrentMonth(e.target.value)} className="border-2 border-slate-300 rounded-lg p-1 text-lg font-bold" />
+                            </div>
+                            <div className="flex gap-2">
+                                {activeTab === 'user_pay' && (
+                                    <>
+                                        {isManager && <button onClick={handleBatchDelete} className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg font-bold shadow flex items-center gap-2">🗑️ 清除本月</button>}
+                                        <button onClick={()=>setShowPasteModal(true)} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold shadow flex items-center gap-2">📋 貼上 Excel 資料</button>
+                                        <button onClick={openPrintModal} className="bg-slate-600 hover:bg-slate-700 text-white px-4 py-2 rounded-lg font-bold shadow flex items-center gap-2">🖨️ 列印清單</button>
+                                    </>
+                                )}
+                                {activeTab === 'gov_pay' && (
+                                    <>
+                                        {isManager && <button onClick={handleBatchDelete} className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg font-bold shadow">🗑️ 清除本月</button>}
+                                        <button onClick={()=>setShowGovModal(true)} className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-bold shadow">＋ 新增核銷紀錄</button>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+
+                        {activeTab === 'user_pay' && (
+                            <div className="bg-white rounded-xl shadow-sm overflow-hidden no-print">
+                                <div className="p-4 bg-slate-50 border-b flex justify-between items-center gap-4">
+                                    <span className="font-bold text-slate-500">本月待收列表 (共 {filteredReceivables.length} 筆)</span>
+                                    <div className="flex gap-2">
+                                        <select className="border p-1 rounded text-sm bg-white" value={filterCollectionType} onChange={e=>setFilterCollectionType(e.target.value)}>
+                                            <option value="all">💳 全部方式</option><option value="caregiver_collect">👤 居服員收</option><option value="transfer">🏦 轉帳</option><option value="none">🚫 無</option>
+                                        </select>
+                                        <select className="border p-1 rounded text-sm bg-white" value={printCaregiver} onChange={e=>setPrintCaregiver(e.target.value)}>
+                                            <option value="all">👥 全部對象</option><option value="supervisor">👨‍💼 督導親收</option>{caregivers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                        </select>
+                                    </div>
+                                </div>
+                                <table className="w-full text-left">
+                                    <thead className="bg-slate-100 text-slate-600 font-bold border-b"><tr><th className="p-3">案號 / 姓名</th><th className="p-3 w-32">收款方式</th><th className="p-3">負責居服員 (派單)</th><th className="p-3 text-right">金額</th><th className="p-3 text-center">狀態</th><th className="p-3 text-right">操作</th></tr></thead>
+                                    <tbody className="divide-y divide-slate-100">
+                                        {filteredReceivables.map(item => (
+                                            <tr key={item.id} className={item.status==='paid' ? 'bg-slate-50 opacity-60' : (item.status==='verifying'?'bg-yellow-50':'hover:bg-blue-50')}>
+                                                <td className="p-3"><div className="font-bold text-slate-700">{item.caseNo}</div><div className="text-xs text-slate-500">{item.clientName}</div></td>
+                                                <td className="p-3">
+                                                    {item.status === 'pending' ? <select className="border rounded p-1 text-sm w-full bg-white" value={item.collectionType || 'caregiver_collect'} onChange={(e)=>updateCollectionType(item, e.target.value)}><option value="caregiver_collect">居服員收</option><option value="transfer">轉帳</option><option value="none">無</option></select> : <span className="text-sm font-bold text-slate-600">{item.collectionType==='transfer'?'轉帳':(item.collectionType==='none'?'無':'居服員收')}</span>}
+                                                </td>
+                                                <td className="p-3">
+                                                    {item.status === 'pending' ? <select className={`border rounded p-1 text-sm w-full bg-white ${!item.caregiverId ? 'border-red-400' : 'border-slate-300'}`} value={item.caregiverId||''} onChange={(e)=>updateCaregiver(item, e.target.value)}><option value="">-- 請指派 --</option><option value="supervisor" className="font-bold text-blue-600">👨‍💼 督導親收</option>{caregivers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select> : <span className="text-sm">{item.caregiverName}</span>}
+                                                </td>
+                                                <td className="p-3 text-right font-mono font-bold">${item.amount}</td>
+                                                <td className="p-3 text-center">
+                                                    {item.status === 'pending' && (item.amount === 0 ? <span className="bg-gray-100 text-gray-500 border border-gray-200 px-2 py-1 rounded text-xs font-bold whitespace-nowrap">無須繳納</span> : <span className="text-red-500 font-bold text-xs">未繳</span>)}
+                                                    {item.status === 'verifying' && <span className="bg-yellow-200 text-yellow-800 px-2 py-1 rounded text-xs font-bold animate-pulse">待核帳</span>}
+                                                    {item.status === 'paid' && <span className="bg-green-100 text-green-700 px-2 py-1 rounded text-xs font-bold">已結案</span>}
+                                                </td>
+                                                <td className="p-3 text-right flex justify-end gap-2">
+                                                    {item.status === 'pending' && item.amount === 0 && (
+                                                        <button onClick={()=>handleZeroAmount(item)} className="bg-slate-300 text-white px-3 py-1 rounded text-xs hover:bg-slate-400 font-bold">✅ 結案歸檔</button>
+                                                    )}
+                                                    {item.status === 'pending' && item.amount > 0 && item.collectionType === 'none' && (
+                                                        <button onClick={()=>handleFullSubsidy(item)} className="bg-purple-600 text-white px-3 py-1 rounded text-xs hover:bg-purple-700 font-bold shadow">💼 全額墊付結案</button>
+                                                    )}
+                                                    {item.status === 'pending' && item.amount > 0 && item.collectionType !== 'none' && (
+                                                        <>
+                                                            <button onClick={()=>{setUserCollectModal({show:true, item, method:'cash', actualAmount: item.amount, useSubsidy: true})}} className="bg-green-500 text-white px-2 py-1 rounded text-xs hover:bg-green-600">收現金</button>
+                                                            <button onClick={()=>handleBankReport(item)} className="bg-blue-500 text-white px-2 py-1 rounded text-xs hover:bg-blue-600">回報匯款</button>
+                                                        </>
+                                                    )}
+                                                    {item.status === 'verifying' && isManager && (
+                                                        <button onClick={()=>{
+                                                            const lastBank = localStorage.getItem('last_bank_user') || (bankOptions[0]?.code || '');
+                                                            setSelectedBankCode(lastBank);
+                                                            setUserCollectModal({show:true, item, method:'bank', actualAmount: item.amount, useSubsidy: true});
+                                                        }} className="bg-slate-800 text-white px-3 py-1 rounded text-xs hover:bg-black shadow-lg">老闆確認</button>
+                                                    )}
+                                                    {item.status === 'verifying' && !isManager && <span className="text-xs text-slate-400 italic">⏳ 等待...</span>}
+                                                    {item.status === 'paid' && <button onClick={()=>handleUndo(item)} className="bg-gray-200 hover:bg-red-100 text-gray-500 hover:text-red-600 px-2 py-1 rounded text-xs font-bold shadow-sm">↩️ 撤銷</button>}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+
+                        {activeTab === 'gov_pay' && (
+                            <div className="bg-white rounded-xl shadow-sm overflow-hidden no-print">
+                                <table className="w-full text-left">
+                                    <thead className="bg-slate-100 font-bold text-slate-600"><tr><th className="p-4">項目</th><th className="p-4 text-right">申報總額</th><th className="p-4 text-right">實入金額</th><th className="p-4 text-right">操作</th></tr></thead>
+                                    <tbody className="divide-y">
+                                        {receivables.map(item => (
+                                            <tr key={item.id} className="hover:bg-slate-50">
+                                                <td className="p-4">
+                                                    <div className="font-bold">{item.title}</div>
+                                                    {item.breakdown && (
+                                                        <div className="text-xs text-slate-400 mt-1 font-mono">
+                                                            B: ${item.breakdown.b} | G: ${item.breakdown.g} | S: ${item.breakdown.s} 
+                                                            {item.breakdown.t ? " | T: $" + item.breakdown.t : ""}
+                                                        </div>
+                                                    )}
+                                                </td>
+                                                <td className="p-4 text-right font-mono">${new Intl.NumberFormat().format(item.amount)}</td>
+                                                <td className="p-4 text-right font-mono text-green-600">{item.actualAmount ? "$" + new Intl.NumberFormat().format(item.actualAmount) : "-"}</td>
+                                                <td className="p-4 text-right">
+                                                    {item.status === 'pending' ? <div className="flex justify-end gap-2"><button onClick={()=>openConfirmModal(item, 'gov')} className="bg-slate-800 text-white px-4 py-2 rounded text-sm font-bold">確認入帳</button><button onClick={()=>handleSingleDelete(item)} className="bg-red-100 text-red-500 hover:bg-red-200 px-3 py-2 rounded">🗑️</button></div> : <div className="flex items-center justify-end gap-2"><span className="text-green-600 font-bold text-xs">已結案</span><button onClick={()=>handleUndo(item)} className="bg-gray-100 hover:bg-red-100 text-gray-400 hover:text-red-500 px-2 py-1 rounded text-xs">↩️</button></div>}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+
+                        {userCollectModal.show && (
+                            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+                                <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl p-6 space-y-4 animate-slide-up">
+                                    <h3 className="text-lg font-bold text-slate-800 border-b pb-2">
+                                        {userCollectModal.method === 'bank' ? '🏦 轉帳入帳確認' : '💵 收取現金確認'}
+                                    </h3>
+                                    <div className="text-sm text-slate-600">案號姓名：<span className="font-bold">{userCollectModal.item.caseNo} {userCollectModal.item.clientName}</span></div>
+                                    <div className="text-sm text-slate-600">應收總額：<span className="font-mono font-bold text-lg text-blue-600">${userCollectModal.item.amount}</span></div>
+                                    
+                                    <div>
+                                        <label className="text-xs font-bold text-slate-500 block mb-1">實際收到金額</label>
+                                        <input type="number" className="w-full border-2 border-blue-500 rounded-lg p-2 text-xl font-bold font-mono" 
+                                            value={userCollectModal.actualAmount} 
+                                            onChange={e=>setUserCollectModal({...userCollectModal, actualAmount: e.target.value})} 
+                                        />
+                                    </div>
+                                    
+                                    {userCollectModal.method === 'bank' && (
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-500 block mb-1">存入銀行帳戶</label>
+                                            <select className="w-full border rounded-lg p-2 text-sm bg-slate-50" value={selectedBankCode} onChange={e=>setSelectedBankCode(e.target.value)}>
+                                                <option value="" disabled>-- 請選擇存入帳戶 --</option>
+                                                {bankOptions.map(b => <option key={b.code} value={b.code}>{b.code} {b.name}</option>)}
+                                            </select>
+                                        </div>
+                                    )}
+
+                                    { (userCollectModal.item.amount - Number(userCollectModal.actualAmount)) > 0 && (
+                                        <div className="bg-orange-50 p-3 rounded-lg border border-orange-200 mt-2">
+                                            <label className="flex items-start gap-2 cursor-pointer">
+                                                <input type="checkbox" className="mt-1" checked={userCollectModal.useSubsidy} onChange={e=>setUserCollectModal({...userCollectModal, useSubsidy: e.target.checked})} />
+                                                <div className="text-xs text-orange-800">
+                                                    <span className="font-bold block mb-1">⚠️ 發現差額 ${userCollectModal.item.amount - Number(userCollectModal.actualAmount)}</span>
+                                                    將差額轉由「老闆庫存現金代墊」結案 (自動產生 5298 雜項支出核銷)
+                                                </div>
+                                            </label>
+                                        </div>
+                                    )}
+
+                                    <div className="flex gap-2 pt-2">
+                                        <button onClick={()=>setUserCollectModal({show:false, item:null, method:'cash', actualAmount: '', useSubsidy:true})} className="flex-1 bg-gray-200 text-gray-600 font-bold py-2 rounded-lg hover:bg-gray-300">取消</button>
+                                        <button onClick={processUserCollection} className="flex-1 bg-blue-600 text-white font-bold py-2 rounded-lg hover:bg-blue-700 shadow-lg">確認結案</button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {confirmModal.show && (
+                            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm"><div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl p-6 space-y-4 animate-slide-up"><h3 className="text-lg font-bold text-slate-800">🏛️ 政府款入帳確認</h3><div><label className="text-xs font-bold text-slate-500 block mb-1">實際入帳金額</label><input type="number" className="w-full border-2 border-blue-500 rounded-lg p-2 text-xl font-bold font-mono" value={confirmAmount} onChange={e=>setConfirmAmount(e.target.value)} /><div className="text-xs text-red-500 mt-1">若少於申報額 ${confirmModal.data.amount}，系統將自動產生折讓傳票。</div></div><div><label className="text-xs font-bold text-slate-500 block mb-1">存入銀行</label><select className="w-full border rounded-lg p-2 text-sm bg-slate-50" value={selectedBankCode} onChange={e=>setSelectedBankCode(e.target.value)}><option value="" disabled>-- 請選擇存入帳戶 --</option>{bankOptions.map(b => <option key={b.code} value={b.code}>{b.code} {b.name}</option>)}</select></div><div className="flex gap-2 pt-2"><button onClick={()=>setConfirmModal({show:false, type:'', data:null})} className="flex-1 bg-gray-200 text-gray-600 font-bold py-2 rounded-lg">取消</button><button onClick={executeConfirmGov} className="flex-1 bg-slate-800 text-white font-bold py-2 rounded-lg hover:bg-black">確認入帳</button></div></div></div>
+                        )}
+
+                        {printModal.show && (
+                            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+                                <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl p-6 space-y-4 animate-slide-up">
+                                    <h3 className="text-lg font-bold text-slate-800 border-b pb-2">🖨️ 列印設定</h3>
+                                    <div>
+                                        <label className="text-xs font-bold text-slate-500 block mb-1">報表標題</label>
+                                        <input type="text" className="w-full border rounded-lg p-2 text-sm" value={printModal.title} onChange={e=>setPrintModal({...printModal, title: e.target.value})} />
+                                    </div>
+                                    <label className="flex items-center gap-2 cursor-pointer p-3 bg-slate-50 border rounded-lg">
+                                        <input type="checkbox" className="w-5 h-5 text-blue-600" checked={printModal.showAmount} onChange={e=>setPrintModal({...printModal, showAmount: e.target.checked})} />
+                                        <span className="font-bold text-slate-700">顯示金額與總計</span>
+                                    </label>
+                                    <div className="flex gap-2 pt-2">
+                                        <button onClick={()=>setPrintModal({...printModal, show:false})} className="flex-1 bg-gray-200 text-gray-600 font-bold py-2 rounded-lg">取消</button>
+                                        <button onClick={executePrint} className="flex-1 bg-slate-600 text-white font-bold py-2 rounded-lg hover:bg-slate-700 shadow-lg">產生報表</button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {showPasteModal && (
+                            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm no-print"><div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden animate-slide-up flex flex-col h-[80vh]"><div className="bg-blue-600 p-4 text-white font-bold flex justify-between"><span>📋 匯入帳單 (Excel 直接貼上)</span><button onClick={()=>setShowPasteModal(false)}>✕</button></div><div className="p-6 flex-1 flex flex-col space-y-4"><div className="bg-blue-50 p-3 rounded text-sm text-blue-800"><p className="font-bold mb-1">使用說明：</p><ol className="list-decimal pl-5 space-y-1"><li>打開 Excel，複製包含 <b>案號(A)、姓名(B)...金額(L)</b> 的資料。</li><li>點擊下方框框，按 <b>貼上 (Ctrl+V)</b>。</li><li>按下「開始分析」按鈕。</li></ol></div><textarea className="w-full flex-1 border-2 border-slate-300 rounded-lg p-4 font-mono text-xs focus:border-blue-500 outline-none resize-none" placeholder="請在這裡貼上 Excel 資料..." value={pasteContent} onChange={e=>setPasteContent(e.target.value)}></textarea><button onClick={processPaste} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg shadow-lg">🚀 開始分析並匯入</button></div></div></div>
+                        )}
+
+                        {showGovModal && (
+                            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm no-print">
+                                <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden animate-slide-up">
+                                    <div className="bg-slate-800 p-4 text-white font-bold flex justify-between">
+                                        <span>新增政府核銷</span>
+                                        <button onClick={()=>setShowGovModal(false)}>✕</button>
+                                    </div>
+                                    <div className="p-6 space-y-4">
+                                        <div><label className="text-xs font-bold text-slate-500">B碼 (照顧專業)</label><input type="number" className="w-full border rounded p-2" value={govForm.b} onChange={e=>setGovForm({...govForm, b: e.target.value})} placeholder="$" /></div>
+                                        <div><label className="text-xs font-bold text-slate-500">G碼 (喘息服務)</label><input type="number" className="w-full border rounded p-2" value={govForm.g} onChange={e=>setGovForm({...govForm, g: e.target.value})} placeholder="$" /></div>
+                                        <div><label className="text-xs font-bold text-slate-500">S碼 (其他/加給)</label><input type="number" className="w-full border rounded p-2" value={govForm.s} onChange={e=>setGovForm({...govForm, s: e.target.value})} placeholder="$" /></div>
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-500 text-blue-600">T碼 (偏鄉交通津貼)</label>
+                                            <input type="number" className="w-full border rounded p-2 border-blue-200 bg-blue-50" value={govForm.t} onChange={e=>setGovForm({...govForm, t: e.target.value})} placeholder="$" />
+                                        </div>
+                                        <div className="border-t pt-2 text-right">
+                                            <span className="text-sm text-slate-500 mr-2">總計:</span>
+                                            <span className="text-xl font-bold text-slate-800">${Number(govForm.b)+Number(govForm.g)+Number(govForm.s)+Number(govForm.t)}</span>
+                                        </div>
+                                        <button onClick={saveGovRecord} className="w-full bg-emerald-600 text-white font-bold py-3 rounded-lg">確認新增</button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<IncomeApp />);
+    </script>
+</body>
+</html>

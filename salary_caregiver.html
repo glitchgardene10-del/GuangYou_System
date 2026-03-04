@@ -1,0 +1,1117 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>居服員薪資系統 (v16.8 轉場費詳列版)</title>
+    
+    <script src="auth-guard.js"></script>
+    <script type="module" src="config.js"></script>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dayjs/1.11.10/dayjs.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Roboto+Mono:wght@500;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: "Noto Sans TC", sans-serif; background-color: #f1f5f9; color: #1e293b; }
+        .drop-zone { border: 2px dashed #94a3b8; background-color: white; border-radius: 12px; transition: 0.3s; cursor: pointer; display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 120px; position: relative; overflow: hidden; }
+        .drop-zone:hover { border-color: #3b82f6; background-color: #eff6ff; }
+        .drop-zone.uploaded { border-color: #10b981; background-color: #ecfdf5; }
+
+        .sys-th { background-color: #334155; color: white; padding: 12px; text-align: left; white-space: nowrap; position: sticky; top: 0; z-index: 20; font-size: 13px; font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+        .sys-td { border-bottom: 1px solid #e2e8f0; padding: 6px; background-color: white; }
+        .sys-input { width: 100%; min-width: 70px; padding: 6px; border: 1px solid #cbd5e1; border-radius: 6px; text-align: right; font-family: "Roboto Mono", monospace; font-size: 13px; transition: all 0.2s; }
+        .sys-input:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1); outline: none; }
+        .sys-input-text { text-align: left; min-width: 150px; } 
+        .deduct-input { color: #dc2626; border-color: #fca5a5; } 
+        .rate-input { color: #059669; font-weight: bold; border-color: #6ee7b7; background-color: #f0fdf4; } 
+        
+        .batch-input { width: 100%; padding: 6px; border: 2px solid #60a5fa; border-radius: 6px; text-align: right; background-color: #eff6ff; color: #1e40af; font-weight: bold; font-size: 12px; }
+        .batch-deduct { border-color: #f87171; background-color: #fef2f2; color: #b91c1c; }
+        .batch-rate { border-color: #34d399; background-color: #ecfdf5; color: #047857; }
+        .batch-row td { background-color: #f1f5f9; border-bottom: 2px solid #cbd5e1; padding: 10px 6px; position: sticky; top: 43px; z-index: 15; }
+
+        .auto-cell { background-color: #f0f9ff; color: #0369a1; font-weight: bold; text-align: center; font-family: "Roboto Mono", monospace; }
+        .auto-input-bg { background-color: #eef2ff; color: #3730a3; font-weight: bold; border-color: #c7d2fe; }
+        .leave-header { background-color: #0284c7 !important; }
+        .leave-half-header { background-color: #fbbf24 !important; color: #78350f !important; }
+        .leave-no-header { background-color: #94a3b8 !important; }
+        .extra-header { background-color: #ca8a04 !important; }
+        .deduct-header { background-color: #b91c1c !important; }
+        .rate-header { background-color: #059669 !important; }
+
+        /* 薪資單樣式 */
+        .payslip-canvas { width: 794px; min-height: 1123px; background: white; padding: 40px 50px; margin: 0 auto; color: #000; box-sizing: border-box; position: relative; font-family: "Noto Sans TC", sans-serif; line-height: 1.4; }
+        #preview-viewport { overflow: auto; background-color: #475569; padding: 40px; display: flex; justify-content: center; align-items: flex-start; border-radius: 12px; box-shadow: inset 0 0 20px rgba(0,0,0,0.3); }
+        #preview-scaler { transform: scale(0.85); transform-origin: top center; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
+        .rp-header-container { text-align: center; margin-bottom: 20px; }
+        .rp-title { font-size: 16px; font-weight: 900; margin-bottom: 5px; line-height: 1.3; white-space: nowrap; letter-spacing: 0.5px; }
+        .rp-subtitle { font-size: 20px; font-weight: bold; text-decoration: underline; }
+        .header-split { display: flex; justify-content: space-between; align-items: flex-end; border: 2px solid #000; padding: 15px 20px; margin-bottom: 20px; background-color: #f8fafc; border-radius: 4px; }
+        .info-left { display: flex; flex-direction: column; gap: 8px; width: 60%; text-align: left; }
+        .info-row { display: flex; align-items: baseline; font-size: 14px; font-weight: 600; color: #333; }
+        .info-label { margin-right: 5px; white-space: nowrap; width: 100px; text-align:right; }
+        .info-val { font-weight: 800; color: #000; font-size: 15px; border-bottom: 1px solid #000; padding-bottom: 2px; padding-left: 5px; padding-right: 10px; min-width: 80px; display: inline-block; }
+        .name-val { font-size: 18px; }
+        .info-right { display: flex; flex-direction: column; gap: 12px; width: 35%; text-align: right; justify-content: flex-end; }
+        .sum-row { font-size: 16px; font-weight: bold; }
+        .sum-val { font-family: "Roboto Mono", monospace; font-size: 22px; margin-left: 5px; font-weight: 800; }
+        .grid-box { display: flex; width: 100%; border: 2px solid #000; }
+        .col-L { width: 50%; border-right: 2px solid #000; }
+        .col-R { width: 50%; }
+        .tbl { width: 100%; border-collapse: collapse; }
+        .td-row { border-bottom: 1px solid #ccc; height: 30px; }
+        .td-content { display: flex; justify-content: space-between; align-items: center; padding: 0 10px; height: 100%; }
+        .tbl tr:last-child .td-row { border-bottom: none; }
+        .label { font-size: 13px; font-weight: 600; color: #1f293b; }
+        .val { font-family: "Roboto Mono", monospace; font-weight: 700; font-size: 14px; color: #000; }
+        .t-blue { color: #1d4ed8; } .t-red { color: #b91c1c; } .bg-hl { background-color: #eff6ff; } .bg-red-light { background-color: #fef2f2; }
+        .footer { margin-top: 20px; border: 1px solid #000; padding: 15px; font-size: 12px; line-height: 1.6; }
+        .footer-section { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px dashed #ccc; }
+        .badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; margin-right: 5px; }
+        .badge-personal { background-color: #dbeafe; color: #1e40af; } .badge-public { background-color: #fef3c7; color: #92400e; }
+        
+        .leave-row { background-color: #f0fdf4; }
+        .leave-row .label { color: #15803d; }
+    </style>
+</head>
+<body class="p-8">
+
+    <div class="max-w-[1800px] mx-auto bg-white p-8 rounded-2xl shadow-xl border border-slate-200">
+        <div class="flex flex-col mb-8 border-b pb-4">
+            <div class="flex justify-between items-center">
+                <h1 class="text-3xl font-extrabold text-slate-800 tracking-tight">💰 居服員薪資系統 <span class="text-sm bg-blue-100 text-blue-700 px-2 py-1 rounded ml-2 align-middle font-normal">v16.8 轉場費詳列版</span></h1>
+                <div class="flex gap-3">
+                    <button onclick="location.reload()" class="text-sm text-slate-500 hover:text-red-500 font-bold px-4 py-2 border border-slate-300 rounded hover:bg-slate-50 transition">↺ 重置系統</button>
+                </div>
+            </div>
+            <div id="firebase-status" class="mt-2 text-sm font-bold text-slate-400 flex items-center gap-2">
+                <span class="w-3 h-3 rounded-full bg-yellow-400 animate-pulse" id="status-dot"></span>
+                <span id="status-text">系統載入中...</span>
+            </div>
+        </div>
+
+        <div id="step-1" class="grid grid-cols-2 md:grid-cols-4 gap-6 mb-8">
+            <div id="drop-main" class="drop-zone group bg-blue-50 border-blue-300">
+                <input type="file" id="fileMain" accept=".xlsx, .xls" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" onchange="window.loadFile(this, 'main')">
+                <div class="text-3xl mb-2 pointer-events-none">📁</div>
+                <h3 class="font-bold text-blue-800 text-sm mb-1 pointer-events-none">1. 薪資報表 (整合檔)</h3>
+                <p id="msg-main" class="text-xs text-blue-600 pointer-events-none">明細總計 / 薪資表</p>
+            </div>
+            <div id="drop-a" class="drop-zone group">
+                <input type="file" id="fileA" accept=".xlsx,.xls,.csv" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" onchange="window.loadFile(this, 'a')">
+                <div class="text-3xl mb-2 text-slate-400 pointer-events-none">📄</div>
+                <h3 class="font-bold text-slate-700 text-sm mb-1 pointer-events-none">2. 拆帳表明細</h3>
+                <p id="msg-a" class="text-xs text-slate-400 pointer-events-none">計算 AA11, AA05, AA06</p>
+            </div>
+            <div id="drop-b" class="drop-zone group border-purple-300 bg-purple-50">
+                <input type="file" id="fileB" accept=".xlsx,.xls,.csv" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" onchange="window.loadFile(this, 'b')">
+                <div class="text-3xl mb-2 text-purple-400 pointer-events-none">🚌</div>
+                <h3 class="font-bold text-purple-700 text-sm mb-1 pointer-events-none">3. 獎勵津貼清冊</h3>
+                <p id="msg-b" class="text-xs text-slate-400 pointer-events-none">計算偏鄉/交通</p>
+            </div>
+        </div>
+
+        <div id="step-2" class="hidden mb-12 animate-fade-in-up">
+            <div class="bg-yellow-50 border border-yellow-200 p-4 rounded-lg mb-6 flex justify-between items-center">
+                <div class="flex gap-4 items-center">
+                    <h4 class="font-bold text-yellow-800 text-sm">✨ 系統狀態：</h4>
+                    <span class="text-sm font-bold text-green-600">✅ 已自動讀取請假資料 (全薪/半薪/無薪)</span>
+                    <span class="text-xs text-slate-500 ml-2">(依據 Firebase 資料庫自動帶入)</span>
+                </div>
+            </div>
+
+            <div class="flex justify-between items-end mb-4">
+                <h3 class="text-xl font-bold text-slate-800 border-l-4 border-blue-500 pl-3">步驟 2: 輸入變動參數 & 個別考核調整</h3>
+                <div class="flex gap-2">
+                    <button onclick="window.exportParams()" class="bg-slate-500 hover:bg-slate-600 text-white font-bold py-1 px-4 rounded text-sm shadow flex items-center gap-1 transition">💾 儲存變動參數</button>
+                    <button onclick="document.getElementById('paramFile').click()" class="bg-amber-500 hover:bg-amber-600 text-white font-bold py-1 px-4 rounded text-sm shadow flex items-center gap-1 transition">📂 讀取變動參數</button>
+                    <input type="file" id="paramFile" hidden accept=".json" onchange="window.importParams(this)">
+                </div>
+            </div>
+            
+            <div class="overflow-x-auto border border-slate-200 rounded-xl max-h-[600px] shadow-inner bg-white">
+                <table class="sys-table w-full">
+                    <thead class="bg-slate-800 text-white sticky top-0 z-20 shadow-md">
+                        <tr>
+                            <th class="sys-th w-16 text-center">編號</th>
+                            <th class="sys-th w-24 sticky left-0 z-30 bg-slate-800 shadow-r">姓名</th>
+                            <th class="sys-th rate-header w-20 text-xs">時薪<br>(DB)</th>
+                            <th class="sys-th rate-header w-20 text-xs">轉場費<br>(DB)</th>
+                            <th class="sys-th auto-cell w-20 text-xs">AA11<br>(自動)</th>
+                            <th class="sys-th auto-cell w-20 text-xs">AA05<br>(自動)</th>
+                            <th class="sys-th auto-cell w-20 text-xs">AA06<br>(自動)</th>
+                            <th class="sys-th auto-cell w-20 text-xs">偏鄉<br>(自動)</th>
+                            <th class="sys-th auto-cell w-20 text-xs">交通<br>(自動)</th>
+                            <th class="sys-th extra-header text-orange-50 w-20 text-xs">補工時<br>(H)</th>
+                            <th class="sys-th extra-header text-orange-50 w-20 text-xs">補交通<br>(H)</th>
+                            <th class="sys-th extra-header text-indigo-50 text-indigo-800 w-20 text-xs">自提<br>(自動%)</th> 
+                            <th class="sys-th leave-header text-white w-20 text-xs">全薪假<br>(時)</th>
+                            <th class="sys-th leave-half-header w-20 text-xs">半薪假<br>(時)</th>
+                            <th class="sys-th leave-no-header text-white w-20 text-xs">無薪假<br>(時)</th>
+                            <th class="sys-th w-24">技能強化</th>
+                            <th class="sys-th w-24 bg-indigo-50 text-indigo-800">丙證(自動)</th> 
+                            <th class="sys-th w-24">生日禮金</th>
+                            <th class="sys-th w-24">服務獎金</th>
+                            <th class="sys-th w-24">會議出席</th>
+                            <th class="sys-th text-blue-200 w-24">中秋/端午</th>
+                            <th class="sys-th w-24">其他(薪資)</th>
+                            <th class="sys-th deduct-header w-24 text-red-50">其他扣款</th>
+                            <th class="sys-th w-40">個人備註</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-slate-50 border-b-2 border-slate-300 sticky top-[60px] z-10 shadow-sm">
+                        <tr class="batch-row">
+                            <td colspan="2" class="sys-td text-right font-bold text-blue-600 pr-4">⚡ 批次填寫：</td>
+                            <td class="sys-td"><input type="number" class="batch-input batch-rate" oninput="window.applyBatch('base_rate', this.value)"></td>
+                            <td class="sys-td"><input type="number" class="batch-input batch-rate" oninput="window.applyBatch('transit_rate', this.value)"></td>
+                            <td colspan="5" class="sys-td text-center text-gray-300">--</td>
+                            <td class="sys-td"><input type="number" class="batch-input" oninput="window.applyBatch('add_work', this.value)"></td>
+                            <td class="sys-td"><input type="number" class="batch-input" oninput="window.applyBatch('add_trans', this.value)"></td>
+                            <td class="sys-td"><input type="number" class="batch-input" oninput="window.applyBatch('pension_rate', this.value)"></td>
+                            <td class="sys-td"><input type="number" class="batch-input" oninput="window.applyBatch('leave_full', this.value)"></td>
+                            <td class="sys-td"><input type="number" class="batch-input" oninput="window.applyBatch('leave_half', this.value)"></td>
+                            <td class="sys-td"><input type="number" class="batch-input" oninput="window.applyBatch('leave_nopay', this.value)"></td>
+                            <td class="sys-td"><input type="number" class="batch-input" oninput="window.applyBatch('skill', this.value)"></td>
+                            <td class="sys-td"><input type="number" class="batch-input" oninput="window.applyBatch('license_bonus', this.value)"></td>
+                            <td class="sys-td"><input type="number" class="batch-input" oninput="window.applyBatch('birthday', this.value)"></td>
+                            <td class="sys-td"><input type="number" class="batch-input" oninput="window.applyBatch('service', this.value)"></td>
+                            <td class="sys-td"><input type="number" class="batch-input" oninput="window.applyBatch('meeting', this.value)"></td>
+                            <td class="sys-td"><input type="number" class="batch-input" oninput="window.applyBatch('festival', this.value)"></td>
+                            <td class="sys-td"><input type="number" class="batch-input" oninput="window.applyBatch('other', this.value)"></td>
+                            <td class="sys-td"><input type="number" class="batch-input batch-deduct" oninput="window.applyBatch('other_deduct', this.value)"></td>
+                            <td class="sys-td text-center text-gray-300">--</td>
+                        </tr>
+                    </tbody>
+                    <tbody id="tbody-manual" class="divide-y divide-slate-100"></tbody>
+                </table>
+            </div>
+            <div class="mt-8 flex justify-center">
+                <button onclick="window.calculateAndShow()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-12 rounded-full shadow-lg text-xl transition transform hover:-translate-y-1 flex items-center gap-3">
+                    <span>🔄</span> 更新計算結果並預覽
+                </button>
+            </div>
+        </div>
+
+        <div id="step-3" class="hidden animate-fade-in-up">
+            <div class="mb-10 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                <div class="flex justify-between items-center mb-6 border-b pb-4">
+                    <h3 class="text-xl font-bold text-slate-800">📊 薪資計算總表</h3>
+                    <div class="flex gap-4 items-center">
+                        <div class="bg-blue-50 text-blue-800 px-5 py-3 rounded-lg border border-blue-100 shadow-sm">
+                            <span class="text-sm font-bold block opacity-70">本月薪資總計</span>
+                            <span class="text-2xl font-black font-mono tracking-tight" id="total-salary-sum">0</span>
+                        </div>
+                        <div class="bg-red-50 text-red-800 px-5 py-3 rounded-lg border border-red-100 shadow-sm">
+                            <span class="text-sm font-bold block opacity-70">實發薪資總計</span>
+                            <span class="text-2xl font-black font-mono tracking-tight" id="total-net-sum">0</span>
+                        </div>
+                        
+                        <div class="flex flex-col items-end gap-1 ml-4 border-l pl-4 border-slate-300">
+                            <div class="flex items-center gap-2">
+                                <label class="text-xs font-bold text-slate-600">歸檔月份:</label>
+                                <input type="month" id="archive-month" class="border border-slate-300 rounded px-2 py-1 text-sm font-bold text-slate-700">
+                            </div>
+                            <div class="flex gap-2">
+                                <button onclick="window.deleteArchivedData()" class="bg-red-100 hover:bg-red-200 text-red-700 font-bold py-2 px-3 rounded shadow flex items-center gap-1 text-sm transition" title="刪除該月所有資料">
+                                    🗑️ 刪除
+                                </button>
+                                <button onclick="window.archiveData()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-5 rounded shadow flex items-center gap-2 text-sm transition transform hover:-translate-y-0.5">
+                                    💾 寫入 (會計歸檔)
+                                </button>
+                            </div>
+                        </div>
+
+                    </div>
+                    <button onclick="window.exportCSV()" class="bg-slate-700 hover:bg-slate-800 text-white font-bold py-2 px-5 rounded text-sm transition hover:bg-slate-900 ml-auto flex items-center gap-2">📥 下載 CSV</button>
+                </div>
+                <div class="overflow-x-auto border rounded-lg bg-white shadow-inner max-h-[400px]">
+                    <table class="sys-table w-full text-sm">
+                        <thead class="text-xs uppercase bg-slate-800 text-white sticky top-0"><tr id="thead-result"></tr></thead>
+                        <tbody id="tbody-result" class="divide-y divide-slate-100 text-sm"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="flex flex-col xl:flex-row gap-8 border-t-2 border-slate-200 pt-8">
+                <div class="w-full xl:w-1/3 space-y-6 sticky top-4 h-fit">
+                    <div class="bg-white p-6 rounded-xl shadow-md border border-blue-100 ring-1 ring-blue-50">
+                        <h3 class="text-lg font-bold mb-4 text-slate-800 flex items-center gap-2"><span>🖨️</span> 輸出中心</h3>
+                        
+                        <div class="mb-6">
+                            <label class="block font-bold mb-2 text-sm text-slate-600">全體公告事項：</label>
+                            <textarea id="custom-note" class="w-full border border-slate-300 p-3 rounded-lg text-sm h-24 resize-none focus:ring-2 focus:ring-blue-200 outline-none" placeholder="在此輸入補充說明 (全體公告)..." oninput="window.renderPreview()"></textarea>
+                        </div>
+
+                        <div class="bg-slate-50 p-4 rounded-lg border border-slate-200 mb-4">
+                            <label class="block font-bold mb-2 text-sm text-slate-600">預覽員工：</label>
+                            <select id="sel-emp" class="w-full border border-slate-300 p-2 rounded-lg mb-3 outline-none bg-white" onchange="window.renderPreview()">
+                                <option>請選擇員工...</option>
+                            </select>
+                            <div class="grid grid-cols-2 gap-3">
+                                <button onclick="window.downloadCurrentJPG()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 rounded shadow flex justify-center items-center gap-2 text-sm transition">
+                                    🖼️ 下載圖片
+                                </button>
+                                <button onclick="window.downloadCurrentPDF()" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 rounded shadow flex justify-center items-center gap-2 text-sm transition">
+                                    📄 下載 PDF
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-red-50 p-6 rounded-xl shadow-md border border-red-100">
+                        <h4 class="font-bold text-red-800 mb-3 flex items-center gap-2"><span>📦</span> 批次作業</h4>
+                        <div class="grid grid-cols-1 gap-3">
+                            <button id="btn-batch" onclick="window.batchProcess()" class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-lg shadow transition text-sm">下載所有 PDF (ZIP)</button>
+                            <button id="btn-batch-jpg" onclick="window.batchProcessJPG()" class="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 rounded-lg shadow transition text-sm">下載所有圖片 (ZIP)</button>
+                        </div>
+                        <div id="progress-box" class="hidden mt-4">
+                            <div class="w-full bg-slate-200 h-2 rounded-full overflow-hidden"><div id="p-bar" class="bg-red-500 h-2 rounded-full w-0 transition-all duration-200"></div></div>
+                            <p id="p-text" class="text-xs text-center mt-2 font-bold text-slate-600"></p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="w-full xl:w-2/3 bg-slate-600 rounded-xl p-8 overflow-auto flex justify-center shadow-inner" id="preview-viewport" style="height: 900px;">
+                    <div id="preview-scaler">
+                        <div id="payslip-entity" class="payslip-canvas">
+                            <div class="rp-header-container">
+                                <div class="rp-title">光祐有限公司附設花蓮縣光祐私立居家式服務類長期照顧服務機構</div>
+                                <div class="rp-subtitle" id="dynamic-date">薪資單</div>
+                            </div>
+                            
+                            <div class="header-split">
+                                <div class="info-left">
+                                    <div class="info-row"><span class="info-label">姓名：</span><span class="info-val name-val" data-k="姓名"></span></div>
+                                    <div class="info-row"><span class="info-label">投保級距：</span><span class="info-val" data-k="投保級距"></span></div>
+                                    <div class="info-row"><span class="info-label">約定時薪：</span><span class="info-val" data-k="約定時薪"></span></div>
+                                    <div class="info-row"><span class="info-label">轉場費率：</span><span class="info-val" data-k="轉場費率"></span></div>
+                                    <div class="info-row"><span class="info-label">加班費基數：</span><span class="info-val" data-k="加班費基數"></span></div>
+                                    <div class="info-row"><span class="info-label">勞退提撥(6%)：</span><span class="info-val" data-k="勞退提撥"></span></div>
+                                </div>
+                                <div class="info-right">
+                                    <div class="sum-row t-blue">本月薪資：<span class="sum-val" data-k="本月薪資"></span> 元</div>
+                                    <div class="sum-row t-red">實領薪資：<span class="sum-val" data-k="實領薪資"></span> 元</div>
+                                </div>
+                            </div>
+
+                            <div class="grid-box">
+                                <div class="col-L">
+                                    <table class="tbl">
+                                        <tbody id="tbl-body-L">
+                                            <tr><td colspan="2"><div class="sub-th"><span>工時明細 (小時)</span><span>總計：<span class="val" data-k="工時總計"></span></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label">本月工時</span><span class="val" data-k="本月工時"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label">工作日加班(9-10)</span><span class="val" data-k="平加(9-10)時"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label">工作日加班(11-12)</span><span class="val" data-k="平加(11-12)時"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label">休假日加班(0-2)</span><span class="val" data-k="休加(0-2)時"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label">休假日加班(3-8)</span><span class="val" data-k="休加(3-8)時"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label">休假日加班(9-10)</span><span class="val" data-k="休加(9-10)時"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label">國定假日加班(0-8)</span><span class="val" data-k="國加(0-8)時"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label">國定假日加班(9-10)</span><span class="val" data-k="國加(9-10)時"></span></div></td></tr>
+                                            
+                                            <tr><td colspan="2" style="padding-top: 10px;"><div class="sub-th"><span>轉場明細</span><span>總計：<span class="val" data-k="轉場總計"></span></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label">工作日轉場時數</span><span class="val" data-k="轉場工時"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label">轉場(9-10)</span><span class="val" data-k="平轉(9-10)時"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label">轉場(11-12)</span><span class="val" data-k="平轉(11-12)時"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label">休假日轉場(0-2)</span><span class="val" data-k="休轉(0-2)時"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label">休假日轉場(3-8)</span><span class="val" data-k="休轉(3-8)時"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label">休假日轉場(9-10)</span><span class="val" data-k="休轉(9-10)時"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label">國定假日轉場</span><span class="val" data-k="國轉工時"></span></div></td></tr>
+                                            
+                                            <tr id="leave-section-header"><td colspan="2" style="padding-top: 10px;"><div class="sub-th"><span>請假明細</span></div></td></tr>
+
+                                            <tr><td colspan="2" style="padding-top: 20px;"></td></tr>
+                                            <tr><td colspan="2" style="border-top: 2px solid #000; background-color: #e2e8f0; font-weight: bold; padding: 5px; text-align: center; border-bottom: 1px solid #000;">代扣明細</td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label">勞保費</span><span class="val" data-k="勞保費"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label">健保費</span><span class="val" data-k="健保費"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label">健保費(眷屬)</span><span class="val" data-k="健保費(眷屬)"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label">勞退自提</span><span class="val" data-k="勞退自提"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label t-red">其他</span><span class="val t-red" data-k="其他扣款"></span></div></td></tr>
+                                            <tr class="bg-red-light"><td class="td-row"><div class="td-content"><span class="label t-red font-bold">代扣小計</span><span class="val t-red" data-k="代扣總計"></span></div></td></tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div class="col-R">
+                                    <table class="tbl">
+                                        <tbody>
+                                            <tr><td colspan="2" style="background-color: #e2e8f0; font-weight: bold; padding: 5px; text-align: center; border-bottom: 1px solid #000;">薪資明細 (元)</td></tr>
+                                            <tr class="bg-hl td-row"><td colspan="2"><div class="td-content"><span class="label font-bold">本薪</span><span class="val" data-k="本薪"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label">工作日加班費</span><span class="val" data-k="工作日加班費"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label">休假日加班費</span><span class="val" data-k="休假日加班費"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label">國定假日加班費</span><span class="val" data-k="國定加班費"></span></div></td></tr>
+                                            
+                                            <tr id="row-trans-100" style="display:none"><td class="td-row"><div class="td-content"><span class="label">平日轉場費</span><span class="val" data-k="轉場費_1.0"></span></div></td></tr>
+                                            <tr id="row-trans-134" style="display:none"><td class="td-row"><div class="td-content"><span class="label">轉場費 (1.34)</span><span class="val" data-k="轉場費_1.34"></span></div></td></tr>
+                                            <tr id="row-trans-167" style="display:none"><td class="td-row"><div class="td-content"><span class="label">轉場費 (1.67)</span><span class="val" data-k="轉場費_1.67"></span></div></td></tr>
+                                            <tr id="row-trans-267" style="display:none"><td class="td-row"><div class="td-content"><span class="label">轉場費 (2.67)</span><span class="val" data-k="轉場費_2.67"></span></div></td></tr>
+                                            <tr id="row-trans-200" style="display:none"><td class="td-row"><div class="td-content"><span class="label">轉場費 (2.0)</span><span class="val" data-k="轉場費_2.0"></span></div></td></tr>
+                                            
+                                            <tr><td colspan="2" style="border-top: 1px dashed #999; height: 2px;"></td></tr>
+                                            
+                                            <tr><td class="td-row"><div class="td-content"><span class="label t-blue font-bold">全薪假給付</span><span class="val" data-k="全薪假給付"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label t-blue font-bold">半薪假給付</span><span class="val" data-k="半薪假給付"></span></div></td></tr>
+
+                                            <tr><td class="td-row"><div class="td-content"><span class="label t-blue font-bold">AA11</span><span class="val" data-k="AA11"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label t-blue font-bold">AA05</span><span class="val" data-k="AA05"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label t-blue font-bold">AA06</span><span class="val" data-k="AA06"></span></div></td></tr>
+
+                                            <tr><td class="td-row"><div class="td-content"><span class="label t-blue font-bold">偏鄉加給</span><span class="val" data-k="偏鄉加給"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label t-blue font-bold">交通加給</span><span class="val" data-k="交通加給"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label">丙證加給</span><span class="val" data-k="丙證加給"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label t-blue font-bold">技能強化</span><span class="val" data-k="技能強化獎勵金"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label t-blue font-bold">生日禮金</span><span class="val" data-k="生日禮金"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label t-blue font-bold">服務獎金</span><span class="val" data-k="服務獎金"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label t-blue font-bold">會議出席</span><span class="val" data-k="會議出席"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label t-blue font-bold">中秋/端午禮金</span><span class="val" data-k="中秋端午"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label t-blue font-bold">其他(薪資)</span><span class="val" data-k="其他"></span></div></td></tr>
+                                            
+                                            <tr><td colspan="2" style="height: 50px;"></td></tr>
+                                            <tr class="bg-hl" style="border-top: 2px solid #000;"><td class="td-row"><div class="td-content"><span class="label t-blue font-bold">應發小計</span><span class="val t-blue" data-k="本月薪資"></span></div></td></tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <div class="footer">
+                                <strong>備註說明 / 公告事項：</strong>
+                                <div id="footer-note" style="margin-top:5px; color: #000;"></div>
+                                <div style="margin-top: 15px; border-top: 1px solid #eee; padding-top: 5px; font-size: 10px; color: #666;">
+                                    本薪資單僅供核對使用，如有塗改無效。
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<script>
+    let app, db, auth;
+    const statusText = document.getElementById("status-text");
+    const statusDot = document.getElementById("status-dot");
+
+    const checkInit = setInterval(() => {
+        if (window.auth && window.db) {
+            clearInterval(checkInit);
+            db = window.db;
+            auth = window.auth;
+            window.onAuthStateChanged(auth, (user) => {
+                if(user) {
+                    statusText.innerText = "Firebase 已連線";
+                    statusDot.classList.replace("bg-yellow-400", "bg-green-500");
+                } else {
+                    statusText.innerText = "等待登入...";
+                    statusDot.classList.replace("bg-yellow-400", "bg-red-500");
+                }
+            });
+        }
+    }, 100);
+
+    let rawH=[], rawS=[], rawA=[], rawB=[], merged=[], results=[], empMap=new Map(), aaMap=new Map(), aa05Map=new Map(), aa06Map=new Map(), subsidyMap=new Map();
+    let dbEmployees = new Map(); 
+    let currentDateLabel = "薪資單";
+    const { jsPDF } = window.jspdf;
+    let savedManualData = {};
+
+    window.loadFile = loadFile;
+    window.saveInput = saveInput;
+    window.applyBatch = applyBatch;
+    window.calculateAndShow = calculateAndShow;
+    window.exportParams = exportParams;
+    window.importParams = importParams;
+    window.renderPreview = renderPreview;
+    window.downloadCurrentJPG = downloadCurrentJPG;
+    window.downloadCurrentPDF = downloadCurrentPDF;
+    window.batchProcess = batchProcess;
+    window.batchProcessJPG = batchProcessJPG;
+    window.exportCSV = exportCSV;
+    window.archiveData = archiveData;
+    window.deleteArchivedData = deleteArchivedData;
+    window.autoFillLeaves = autoFillLeaves;
+
+    // ★ 智慧欄位索引 (初始值，會被 autoMapColumns 覆蓋)
+    let IDX = { 
+        h: { work_day:[16], work_ot_9_10:[25,91], work_ot_11_12:[27,93], hol_ot_0_2:[45,111], hol_ot_3_8:[47,113], hol_ot_9_10:[49,115], nat_ot_0_8:[29,31,95,97], nat_ot_9_10:[33,99], trans_work:[15], trans_work_9_10:[26,92], trans_work_11_12:[28,94], trans_hol_0_2:[46,112], trans_hol_3_8:[48,114], trans_hol_9_10:[50,116], trans_nat:[30,32,96,98] }, 
+        s: { license:60, remote:61, trans:62, add_120:63, add_140:64, skill:65, level:67, labor:80, health:81, health_dep:82, pension:83 } 
+    };
+
+    function loadFile(input, type) {
+        if(!input.files[0]) return;
+        const r = new FileReader();
+        r.onload = e => {
+            const wb = XLSX.read(new Uint8Array(e.target.result), {type:'array'});
+            if(type === 'main') {
+                const sheetHName = wb.SheetNames.find(n => n.includes('明細總計'));
+                const sheetSName = wb.SheetNames.find(n => n.includes('薪資表'));
+                
+                if(!sheetHName || !sheetSName) {
+                    alert("❌ 讀取失敗！找不到「明細總計」或「薪資表」分頁"); return; 
+                }
+
+                rawH = XLSX.utils.sheet_to_json(wb.Sheets[sheetHName], {header:1});
+                rawS = XLSX.utils.sheet_to_json(wb.Sheets[sheetSName], {header:1});
+                
+                // ★ 執行智慧欄位對應
+                autoMapColumns(rawH[0] || []);
+
+                if(rawS.length > 1 && rawS[1][0]) {
+                    const match = rawS[1][0].toString().match(/(\d{4}年\d{1,2}月)/);
+                    if(match) {
+                        currentDateLabel = match[1] + " 薪資單";
+                        document.getElementById('dynamic-date').innerText = currentDateLabel;
+                        const y = match[1].substring(0, 4);
+                        const m = match[1].substring(5, match[1].indexOf('月')).padStart(2, '0');
+                        document.getElementById('archive-month').value = `${y}-${m}`;
+                    }
+                }
+                document.getElementById('drop-main').classList.add('uploaded');
+            } else if(type === 'a') {
+                rawA = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {header:1});
+                document.getElementById('drop-a').classList.add('uploaded');
+            } else if(type === 'b') {
+                rawB = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {header:1});
+                document.getElementById('drop-b').classList.add('uploaded');
+            }
+            if(rawH.length && rawS.length && rawA.length && rawB.length) processAll();
+        };
+        r.readAsArrayBuffer(input.files[0]);
+    }
+
+    // ★ 新增：智慧欄位偵測函式
+    function autoMapColumns(headers) {
+        const map = {
+            trans_work: [], trans_work_9_10: [], trans_work_11_12: [],
+            trans_hol_0_2: [], trans_hol_3_8: [], trans_hol_9_10: [],
+            trans_nat: []
+        };
+
+        headers.forEach((h, i) => {
+            const str = String(h || '').trim();
+            if(!str.includes('轉場')) return;
+
+            if (str.includes('工作日') && !str.includes('9-10') && !str.includes('11-12')) map.trans_work.push(i);
+            else if (str.includes('工作日') && str.includes('9-10')) map.trans_work_9_10.push(i);
+            else if (str.includes('工作日') && str.includes('11-12')) map.trans_work_11_12.push(i);
+            else if (str.includes('休假日') && (str.includes('0-2') || str.includes('2小時'))) map.trans_hol_0_2.push(i);
+            else if (str.includes('休假日') && (str.includes('3-8') || str.includes('8小時'))) map.trans_hol_3_8.push(i);
+            else if (str.includes('休假日') && str.includes('9-10')) map.trans_hol_9_10.push(i);
+            else if (str.includes('國定')) map.trans_nat.push(i);
+        });
+
+        // 只有當找到對應欄位時才覆蓋預設值
+        if(map.trans_work.length > 0) IDX.h.trans_work = map.trans_work;
+        if(map.trans_work_9_10.length > 0) IDX.h.trans_work_9_10 = map.trans_work_9_10;
+        if(map.trans_work_11_12.length > 0) IDX.h.trans_work_11_12 = map.trans_work_11_12;
+        if(map.trans_hol_0_2.length > 0) IDX.h.trans_hol_0_2 = map.trans_hol_0_2;
+        if(map.trans_hol_3_8.length > 0) IDX.h.trans_hol_3_8 = map.trans_hol_3_8;
+        if(map.trans_hol_9_10.length > 0) IDX.h.trans_hol_9_10 = map.trans_hol_9_10;
+        if(map.trans_nat.length > 0) IDX.h.trans_nat = map.trans_nat;
+        
+        console.log("Auto Mapped Columns:", IDX.h);
+    }
+
+    function exportParams() {
+        if (Object.keys(savedManualData).length === 0) {
+            alert("目前沒有任何變動參數可儲存！");
+            return;
+        }
+        const blob = new Blob([JSON.stringify(savedManualData)], {type: "application/json"});
+        const datePrefix = currentDateLabel.replace(" 薪資單", "") || "temp";
+        saveAs(blob, `${datePrefix}_薪資變動參數.json`);
+    }
+
+    function importParams(input) {
+        if(!input.files[0]) return;
+        const r = new FileReader();
+        r.onload = e => {
+            try {
+                savedManualData = JSON.parse(e.target.result);
+                if (merged.length > 0) {
+                    renderManualTable();
+                    alert("參數讀取成功！表格已更新。");
+                } else {
+                    alert("參數讀取成功！請繼續上傳 Excel 檔案以顯示資料。");
+                }
+            } catch (err) {
+                alert("參數檔案格式錯誤！");
+            }
+            input.value = '';
+        };
+        r.readAsText(input.files[0]);
+    }
+
+    async function processAll() {
+        const q = window.query(window.collection(db, "employees"), window.where("role", "==", "caregiver"));
+        const querySnapshot = await window.getDocs(q);
+        dbEmployees.clear();
+        querySnapshot.forEach((doc) => {
+            dbEmployees.set(doc.data().name, { id: doc.id, ...doc.data() });
+        });
+
+        aaMap.clear(); aa05Map.clear(); aa06Map.clear(); subsidyMap.clear();
+
+        // 省略 rawA, rawB 處理 (保持原樣)
+        const headerA = rawA[0] || [];
+        const idx_a_code = 12; // 簡化，若需 findCol 可補回
+        const idx_a_qty = 14;
+        for(let i=2; i<rawA.length; i++) {
+            const r = rawA[i];
+            if(!r || r.length < 5) continue;
+            const name = r[1]?.toString().trim() || "";
+            const code = r[idx_a_code]?.toString().trim() || "";
+            const qty = parseFloat(r[idx_a_qty]) || 0;
+            if(name) {
+                if (code === 'AA11') aaMap.set(name, (aaMap.get(name) || 0) + qty);
+                else if (code === 'AA05') aa05Map.set(name, (aa05Map.get(name) || 0) + qty);
+                else if (code === 'AA06') aa06Map.set(name, (aa06Map.get(name) || 0) + qty);
+            }
+        }
+        const idx_b_amt = 12;
+        for(let i=2; i<rawB.length; i++) { 
+            const r = rawB[i];
+            const name = r[2]?.toString().trim() || "";
+            const amt = parseFloat(r[idx_b_amt]) || 0;
+            if(name && amt > 0) subsidyMap.set(name, amt / 2);
+        }
+
+        const hMap = new Map();
+        for(let i=3; i<rawH.length; i++) {
+            if(rawH[i][3]) hMap.set(rawH[i][3].toString().trim(), rawH[i]);
+        }
+        
+        merged = [];
+        for(let i=3; i<rawS.length; i++) {
+            const r = rawS[i];
+            const name = r[3]?.toString().trim();
+            
+            if(name && hMap.has(name) && dbEmployees.has(name)) {
+                merged.push({ 
+                    id: r[1]||"", name: name, 
+                    hRow: hMap.get(name), sRow: r, 
+                    aaAmt: (aaMap.get(name)||0) * 50,
+                    aa05Amt: (aa05Map.get(name)||0) * 50,
+                    aa06Amt: (aa06Map.get(name)||0) * 50,
+                    subAmt: subsidyMap.get(name) || 0 
+                });
+            }
+        }
+
+        await syncFirestoreData();
+        await autoFillLeaves(); 
+    }
+
+    async function syncFirestoreData() {
+        statusText.innerText = "正在同步 Firebase 設定...";
+        statusDot.className = "w-3 h-3 rounded-full bg-yellow-400 animate-pulse";
+        try {
+            merged.forEach(m => {
+                const dbData = dbEmployees.get(m.name);
+                if (dbData) {
+                    if (!savedManualData[m.name]) savedManualData[m.name] = {};
+                    const rate = Number(dbData.hourlyWage) || 0; 
+                    const bonus = Number(dbData.hourlyBonus) || 0;
+                    savedManualData[m.name]['base_rate'] = rate + bonus;
+                    let tRate = 196;
+                    if(dbData.transitWage !== undefined) tRate = Number(dbData.transitWage);
+                    else if(dbData.transitRate !== undefined) tRate = Number(dbData.transitRate);
+                    savedManualData[m.name]['transit_rate'] = tRate;
+                    if (dbData.hasLicense === true && savedManualData[m.name]['license_bonus'] === undefined) {
+                        savedManualData[m.name]['license_bonus'] = 1000;
+                    }
+                    if (dbData.pensionRate !== undefined && dbData.pensionRate !== null && savedManualData[m.name]['pension_rate'] === undefined) {
+                        savedManualData[m.name]['pension_rate'] = Number(dbData.pensionRate);
+                    }
+                }
+            });
+            statusText.innerText = "Firebase 連線成功 (資料已同步)";
+            statusDot.className = "w-3 h-3 rounded-full bg-green-500";
+        } catch (error) {
+            console.error(error);
+            statusText.innerText = "Firebase 連線失敗";
+            statusDot.className = "w-3 h-3 rounded-full bg-red-500";
+        }
+    }
+
+    async function autoFillLeaves() {
+        const monthStr = document.getElementById('archive-month').value;
+        if (!monthStr) { renderManualTable(); return; }
+        const startStr = monthStr + "-01";
+        const endStr = dayjs(monthStr).endOf('month').format('YYYY-MM-DD');
+        try {
+            for (let emp of merged) {
+                const dbData = dbEmployees.get(emp.name);
+                if (!dbData) continue;
+                const q = window.query(window.collection(db, "leave_records"), window.where("empId", "==", dbData.id));
+                const snap = await window.getDocs(q);
+                let full = 0, half = 0, no = 0; 
+                let details = []; 
+                snap.forEach(doc => {
+                    const r = doc.data();
+                    if (r.date >= startStr && r.date <= endStr) {
+                        const hours = Number(r.hours) || 0;
+                        const type = r.type || "";
+                        details.push({ type: type, hours: hours });
+                        if (['特休','喪假','公假','婚假','產假','陪產假','歲時祭儀'].some(k => type.includes(k))) full += hours;
+                        else if (['病假','生理假'].some(k => type.includes(k))) half += hours;
+                        else no += hours;
+                    }
+                });
+                if (details.length > 0) {
+                    if (!savedManualData[emp.name]) savedManualData[emp.name] = {};
+                    savedManualData[emp.name]['leave_full'] = full;
+                    savedManualData[emp.name]['leave_half'] = half;
+                    savedManualData[emp.name]['leave_nopay'] = no;
+                    savedManualData[emp.name]['leave_details'] = details;
+                }
+            }
+            renderManualTable(); 
+            statusText.innerText = `系統就緒 (請假資料同步完成)`;
+        } catch (e) { console.error(e); }
+    }
+
+    function renderManualTable() {
+        const tb = document.getElementById('tbody-manual');
+        tb.innerHTML = merged.map((e,i) => {
+            const saved = savedManualData[e.name] || {};
+            const getVal = (k) => saved[k] !== undefined ? saved[k] : 0;
+            const getBaseRate = () => saved['base_rate'] !== undefined ? saved['base_rate'] : 0; 
+            const getTransitRate = () => saved['transit_rate'] !== undefined ? saved['transit_rate'] : 0; 
+            const getNote = () => saved['note'] || '';
+            const dbData = dbEmployees.get(e.name) || {};
+            const dbPension = dbData.pensionRate || 0;
+            const dbLicense = dbData.hasLicense ? '✅' : '-';
+
+            return `
+            <tr class="hover:bg-slate-50">
+                <td class="sys-td text-center text-xs text-gray-500">${e.id}</td>
+                <td class="sys-td font-bold sticky left-0 bg-white border-r shadow-sm">${e.name}</td>
+                <td class="sys-td relative">
+                    <input type="number" id="base_rate_${i}" value="${getBaseRate()}" class="sys-input rate-input base_rate-input auto-input-bg" onfocus="this.select()" onchange="saveInput('${e.name}', 'base_rate', this.value)">
+                    <div class="text-[10px] text-indigo-400 text-center absolute bottom-0 w-full left-0 pointer-events-none">DB連動</div>
+                </td>
+                <td class="sys-td relative">
+                    <input type="number" id="transit_rate_${i}" value="${getTransitRate()}" class="sys-input rate-input transit_rate-input auto-input-bg" onfocus="this.select()" onchange="saveInput('${e.name}', 'transit_rate', this.value)">
+                    <div class="text-[10px] text-indigo-400 text-center absolute bottom-0 w-full left-0 pointer-events-none">DB連動</div>
+                </td>
+                <td class="sys-td text-center text-green-600 bg-green-50 font-bold auto-cell">${e.aaAmt}</td>
+                <td class="sys-td text-center text-green-600 bg-green-50 font-bold auto-cell">${e.aa05Amt}</td>
+                <td class="sys-td text-center text-green-600 bg-green-50 font-bold auto-cell">${e.aa06Amt}</td>
+                <td class="sys-td text-center text-purple-600 bg-purple-50 font-bold auto-cell">${e.subAmt*2}</td>
+                <td class="sys-td text-center text-purple-600 bg-purple-50 font-bold auto-cell">${e.subAmt*2}</td>
+                <td class="sys-td extra-col"><input type="number" class="sys-input add_work-input" id="add_work_${i}" value="${getVal('add_work')}" onfocus="this.select()" onchange="saveInput('${e.name}', 'add_work', this.value)"></td>
+                <td class="sys-td extra-col"><input type="number" class="sys-input add_trans-input" id="add_trans_${i}" value="${getVal('add_trans')}" onfocus="this.select()" onchange="saveInput('${e.name}', 'add_trans', this.value)"></td>
+                <td class="sys-td extra-col relative">
+                    <input type="number" class="sys-input pension_rate-input auto-input-bg" id="pension_rate_${i}" value="${getVal('pension_rate')}" onfocus="this.select()" onchange="saveInput('${e.name}', 'pension_rate', this.value)">
+                    <div class="text-[10px] text-indigo-400 text-center absolute bottom-0 w-full left-0 pointer-events-none">DB:${dbPension}%</div>
+                </td>
+                <td class="sys-td leave-col"><input type="number" class="sys-input leave_full-input" id="leave_full_${i}" value="${getVal('leave_full')}" onfocus="this.select()" onchange="saveInput('${e.name}', 'leave_full', this.value)"></td>
+                <td class="sys-td"><input type="number" class="sys-input leave_half-input bg-yellow-50 border-yellow-200 text-yellow-800" id="leave_half_${i}" value="${getVal('leave_half')}" onfocus="this.select()" onchange="saveInput('${e.name}', 'leave_half', this.value)"></td>
+                <td class="sys-td"><input type="number" class="sys-input leave_nopay-input bg-slate-100 text-slate-400" id="leave_nopay_${i}" value="${getVal('leave_nopay')}" onfocus="this.select()" onchange="saveInput('${e.name}', 'leave_nopay', this.value)"></td>
+                <td class="sys-td"><input type="number" id="skill_${i}" value="${getVal('skill')}" class="sys-input skill-input" onfocus="this.select()" onchange="saveInput('${e.name}', 'skill', this.value)"></td>
+                <td class="sys-td relative">
+                    <input type="number" id="license_bonus_${i}" value="${getVal('license_bonus')}" class="sys-input license_bonus-input auto-input-bg" onfocus="this.select()" onchange="saveInput('${e.name}', 'license_bonus', this.value)">
+                    <div class="text-[10px] text-indigo-400 text-center absolute bottom-0 w-full left-0 pointer-events-none">DB:${dbLicense}</div>
+                </td>
+                <td class="sys-td"><input type="number" id="birthday_${i}" value="${getVal('birthday')}" class="sys-input birthday-input" onfocus="this.select()" onchange="saveInput('${e.name}', 'birthday', this.value)"></td>
+                <td class="sys-td"><input type="number" id="service_${i}" value="${getVal('service')}" class="sys-input service-input" onfocus="this.select()" onchange="saveInput('${e.name}', 'service', this.value)"></td>
+                <td class="sys-td"><input type="number" id="meeting_${i}" value="${getVal('meeting')}" class="sys-input meeting-input" onfocus="this.select()" onchange="saveInput('${e.name}', 'meeting', this.value)"></td>
+                <td class="sys-td"><input type="number" id="festival_${i}" value="${getVal('festival')}" class="sys-input festival-input" onfocus="this.select()" onchange="saveInput('${e.name}', 'festival', this.value)"></td>
+                <td class="sys-td"><input type="number" id="other_${i}" value="${getVal('other')}" class="sys-input other-input" onfocus="this.select()" onchange="saveInput('${e.name}', 'other', this.value)"></td>
+                <td class="sys-td"><input type="number" id="other_deduct_${i}" value="${getVal('other_deduct')}" class="sys-input deduct-input other_deduct-input" onfocus="this.select()" onchange="saveInput('${e.name}', 'other_deduct', this.value)"></td>
+                <td class="sys-td"><input type="text" id="note_${i}" value="${getNote()}" class="sys-input sys-input-text note-input" onchange="saveInput('${e.name}', 'note', this.value)"></td>
+            </tr>
+        `}).join('');
+        document.getElementById('step-2').classList.remove('hidden');
+    }
+
+    function saveInput(name, field, value) {
+        if (!savedManualData[name]) savedManualData[name] = {};
+        savedManualData[name][field] = field === 'note' ? value : Number(value);
+    }
+
+    function applyBatch(key, val) {
+        document.querySelectorAll(`.${key}-input`).forEach((el, index) => {
+            el.value = val;
+            const name = merged[index].name;
+            saveInput(name, key, val);
+        });
+    }
+
+    function calculateAndShow() {
+        calculate();
+        document.getElementById('step-3').classList.remove('hidden');
+        const sel = document.getElementById('sel-emp');
+        if(sel.options.length > 1) {
+            sel.selectedIndex = 1; 
+            renderPreview();
+        }
+        document.getElementById('step-3').scrollIntoView({behavior: 'smooth'});
+    }
+
+    const val = (r,i) => {
+        if(i === undefined || i === -1) return 0;
+        return (r[i]==null || isNaN(Number(r[i]))) ? 0 : Number(r[i]);
+    };
+    const sum = (r,idxs) => { 
+        let s=0; 
+        if(!idxs) return 0;
+        idxs.forEach(i => s += val(r,i)); 
+        return Math.round(s/60*1000)/1000; 
+    };
+    const fmtMoney = n => Math.round(n).toLocaleString();
+    const fmtHours = n => (Math.round(n * 1000) / 1000).toString();
+
+    function calculate() {
+        let totalSalarySum = 0;
+        let totalNetSum = 0;
+
+        results = merged.map((emp, i) => {
+            const h = {}; for(let k in IDX.h) h[k] = sum(emp.hRow, IDX.h[k]);
+            
+            const saved = savedManualData[emp.name] || {};
+            const m = {
+                skill: saved['skill'] || 0,
+                license: saved['license_bonus'] || 0,
+                birthday: saved['birthday'] || 0,
+                service: saved['service'] || 0,
+                meeting: saved['meeting'] || 0,
+                festival: saved['festival'] || 0,
+                other: saved['other'] || 0,
+                other_deduct: saved['other_deduct'] || 0
+            };
+            
+            const personal_base_rate = saved['base_rate'] !== undefined ? saved['base_rate'] : 0; 
+            const trans_rate = saved['transit_rate'] !== undefined ? saved['transit_rate'] : 0;
+            const add_work = saved['add_work'] || 0;
+            const add_trans = saved['add_trans'] || 0;
+            const pension_rate = Number(saved['pension_rate']) || 0;
+            const note = saved['note'] || "";
+
+            const leave_full_h = saved['leave_full'] || 0;
+            const leave_half_h = saved['leave_half'] || 0;
+            const leave_nopay_h = saved['leave_nopay'] || 0;
+            const leave_details = saved['leave_details'] || []; 
+
+            const leave_full_amt = Math.round(leave_full_h * personal_base_rate);
+            const leave_half_amt = Math.round(leave_half_h * personal_base_rate * 0.5);
+
+            const s = emp.sRow;
+            const ins_level = val(s, 67);
+
+            h.work_day += add_work;
+            h.trans_work += add_trans;
+
+            const base = Math.round(personal_base_rate * h.work_day);
+            const total_work_hours = Math.round((h.work_day + h.work_ot_9_10 + h.work_ot_11_12 + h.hol_ot_0_2 + h.hol_ot_3_8 + h.hol_ot_9_10 + h.nat_ot_0_8 + h.nat_ot_9_10)*1000)/1000;
+            const total_trans_hours = Math.round((h.trans_work + h.trans_work_9_10 + h.trans_work_11_12 + h.trans_hol_0_2 + h.trans_hol_3_8 + h.trans_hol_9_10 + h.trans_nat)*1000)/1000;
+
+            let hourly_bonus = 0;
+            let final_license = (saved['license_bonus'] !== undefined) ? m.license : val(s, IDX.s.license);
+
+            const ot_numerator = base + final_license + m.service + hourly_bonus + emp.aa05Amt + emp.aa06Amt;
+            const ot_base = h.work_day > 0 ? Math.round(ot_numerator / h.work_day) : 0;
+            
+            const pay = {
+                wot: Math.round(ot_base*1.34*h.work_ot_9_10 + ot_base*1.67*h.work_ot_11_12),
+                hot: Math.round(ot_base*1.34*h.hol_ot_0_2 + ot_base*1.67*h.hol_ot_3_8 + ot_base*2.67*h.hol_ot_9_10),
+                not: Math.round(ot_base*2*h.nat_ot_0_8 + ot_base*2.34*h.nat_ot_9_10),
+                // ★ 拆解轉場費 (Granular Transit Calculation)
+                trans_100: Math.round(trans_rate * h.trans_work),
+                trans_134: Math.round(trans_rate * 1.34 * (h.trans_work_9_10 + h.trans_hol_0_2)),
+                trans_167: Math.round(trans_rate * 1.67 * (h.trans_work_11_12 + h.trans_hol_3_8)),
+                trans_267: Math.round(trans_rate * 2.67 * h.trans_hol_9_10),
+                trans_200: Math.round(trans_rate * 2 * h.trans_nat)
+            };
+            
+            // 轉場費總計 (用於顯示在列表表格，薪資單用細項)
+            const total_trans_pay = pay.trans_100 + pay.trans_134 + pay.trans_167 + pay.trans_267 + pay.trans_200;
+
+            const total = Math.round(base + pay.wot + pay.hot + pay.not + total_trans_pay + emp.aaAmt + emp.aa05Amt + emp.aa06Amt + final_license + emp.subAmt*2 + hourly_bonus + m.skill + m.birthday + m.service + m.meeting + m.festival + m.other + leave_full_amt + leave_half_amt);
+            const pension_self = Math.round(ins_level * (pension_rate / 100));
+            const pension_employer = Math.round(ins_level * 0.06);
+            const deduct = val(s,IDX.s.labor) + val(s,IDX.s.health) + val(s,IDX.s.health_dep) + pension_self + m.other_deduct;
+
+            totalSalarySum += total;
+            totalNetSum += (total - deduct);
+
+            const dbData = dbEmployees.get(emp.name);
+            const empId = dbData ? dbData.id : null;
+            const ot_hours = h.work_ot_9_10 + h.work_ot_11_12 + h.hol_ot_0_2 + h.hol_ot_3_8 + h.hol_ot_9_10 + h.nat_ot_0_8 + h.nat_ot_9_10;
+            const ot_trans_hours = h.trans_work_9_10 + h.trans_work_11_12 + h.trans_hol_0_2 + h.trans_hol_3_8 + h.trans_hol_9_10 + h.trans_nat;
+
+            return {
+                "編號": emp.id, "姓名": emp.name, "empId": empId,
+                "投保級距": ins_level, "加班費基數": ot_base, "本月薪資": total, "實領薪資": total-deduct,
+                "工時總計": total_work_hours, "轉場總計": total_trans_hours,
+                "勞退提撥": pension_employer, "勞退自提": pension_self, "自提趴數": pension_rate,
+                "約定時薪": personal_base_rate, "轉場費率": trans_rate,
+                "本月工時": h.work_day, 
+                "平加(9-10)時": h.work_ot_9_10, "平加(11-12)時": h.work_ot_11_12,
+                "休加(0-2)時": h.hol_ot_0_2, "休加(3-8)時": h.hol_ot_3_8, "休加(9-10)時": h.hol_ot_9_10,
+                "國加(0-8)時": h.nat_ot_0_8, "國加(9-10)時": h.nat_ot_9_10,
+                "轉場工時": h.trans_work, 
+                "平轉(9-10)時": h.trans_work_9_10, "平轉(11-12)時": h.trans_work_11_12,
+                "休轉(0-2)時": h.trans_hol_0_2, "休轉(3-8)時": h.trans_hol_3_8, "休轉(9-10)時": h.trans_hol_9_10, "國轉工時": h.trans_nat,
+                "本薪": base, "工作日加班費": pay.wot, "休假日加班費": pay.hot, "國定加班費": pay.not,
+                
+                // ★ 傳遞細項金額
+                "轉場費": total_trans_pay,
+                "轉場費_1.0": pay.trans_100,
+                "轉場費_1.34": pay.trans_134,
+                "轉場費_1.67": pay.trans_167,
+                "轉場費_2.67": pay.trans_267,
+                "轉場費_2.0": pay.trans_200,
+
+                "AA11": emp.aaAmt, "AA05": emp.aa05Amt, "AA06": emp.aa06Amt,
+                "丙證加給": final_license, 
+                "偏鄉加給": emp.subAmt, "交通加給": emp.subAmt,
+                "技能強化獎勵金": m.skill,
+                "生日禮金": m.birthday, "服務獎金": m.service, "會議出席": m.meeting, "中秋端午": m.festival, "其他": m.other,
+                "其他扣款": m.other_deduct,
+                "全薪假時數": leave_full_h, "半薪假時數": leave_half_h, "無薪假時數": leave_nopay_h,
+                "全薪假給付": leave_full_amt, "半薪假給付": leave_half_amt,
+                "請假明細": leave_details, 
+                "勞保費": val(s,IDX.s.labor), "健保費": val(s,IDX.s.health), "健保費(眷屬)": val(s,IDX.s.health_dep), "代扣總計": deduct,
+                "個人備註": note,
+                "歸檔_加班工時": ot_hours, "歸檔_加班轉場": ot_trans_hours
+            };
+        });
+
+        document.getElementById('total-salary-sum').innerText = fmtMoney(totalSalarySum);
+        document.getElementById('total-net-sum').innerText = fmtMoney(totalNetSum);
+
+        const keys = Object.keys(results[0]).filter(k => !k.startsWith("歸檔_") && !k.startsWith("轉場費_") && k !== "empId" && k !== "請假明細");
+        document.getElementById('thead-result').innerHTML = keys.map(k=>`<th class="sys-th">${k}</th>`).join('');
+        document.getElementById('tbody-result').innerHTML = results.map(r=>`<tr>${keys.map(k => {
+            const v = r[k];
+            if(typeof v === 'number') {
+                if(k.includes('時') || k.includes('數') || k.includes('趴') || k.includes('費率')) return `<td class="sys-td">${fmtHours(v)}</td>`;
+                return `<td class="sys-td">${fmtMoney(v)}</td>`;
+            }
+            return `<td class="sys-td">${v}</td>`;
+        }).join('')}</tr>`).join('');
+        
+        empMap.clear();
+        const sel = document.getElementById('sel-emp');
+        const currentSel = sel.value;
+        sel.innerHTML = '<option>請選擇員工...</option>';
+        results.forEach(r => { empMap.set(r.姓名, r); sel.add(new Option(`${r.編號} ${r.姓名}`, r.姓名)); });
+        if(currentSel && empMap.has(currentSel)) { sel.value = currentSel; renderPreview(); }
+    }
+
+    async function archiveData() {
+        const month = document.getElementById('archive-month').value;
+        if(!month) return alert("請選擇歸檔月份！");
+        const hasNaN = results.some(r => isNaN(r['實領薪資']) || isNaN(r['本月薪資']));
+        if(hasNaN) return alert("❌ 錯誤：偵測到數值異常 (NaN)，請先檢查 Excel 或參數是否正確！");
+        if(!confirm(`確定要將 ${month} 的薪資資料寫入資料庫嗎？`)) return;
+        const btn = document.querySelector('button[onclick="window.archiveData()"]');
+        const oldText = btn.innerHTML;
+        btn.innerText = "⏳ 寫入中...";
+        btn.disabled = true;
+        try {
+            let count = 0;
+            for(let r of results) {
+                if(!r.empId) continue; 
+                const q = window.query(window.collection(db, "monthly_records"), window.where("empId", "==", r.empId), window.where("yearMonth", "==", month));
+                const snap = await window.getDocs(q);
+                const finalResult = { grossSalary: r['本月薪資'], netSalary: r['實領薪資'], employerPension: r['勞退提撥'], employeePension: r['勞退自提'], totalDeduction: r['代扣總計'], calculatedAt: new Date().toISOString() };
+                const data = { empId: r.empId, yearMonth: month, salary: r['本月薪資'], workHours: r['本月工時'], transitHours: r['轉場工時'], otWorkHours: r['歸檔_加班工時'], otTransitHours: r['歸檔_加班轉場'], totalBaseHours: parseFloat((r['本月工時'] + r['轉場工時']).toFixed(2)), finalResult: finalResult, updatedAt: new Date().toISOString() };
+                if(!snap.empty) await window.updateDoc(window.doc(db, "monthly_records", snap.docs[0].id), data);
+                else await window.addDoc(window.collection(db, "monthly_records"), { ...data, createdAt: new Date().toISOString() });
+                count++;
+            }
+            alert(`✅ 成功歸檔 ${count} 筆資料 (含會計數據)！`);
+        } catch(e) { console.error(e); alert("❌ 歸檔失敗，請檢查網路或權限"); } finally { btn.innerHTML = oldText; btn.disabled = false; }
+    }
+
+    async function deleteArchivedData() {
+        const month = document.getElementById('archive-month').value;
+        if(!month) return alert("請選擇要刪除的月份！");
+        if(!confirm(`⚠️ 危險操作！\n確定要刪除 [${month}] 所有已歸檔的資料嗎？`)) return;
+        const btn = document.querySelector('button[onclick="window.deleteArchivedData()"]');
+        const oldText = btn.innerHTML;
+        btn.innerText = "⏳ 刪除中...";
+        btn.disabled = true;
+        try {
+            const q = window.query(window.collection(db, "monthly_records"), window.where("yearMonth", "==", month));
+            const querySnapshot = await window.getDocs(q);
+            if(querySnapshot.empty) { alert("查無該月份的歸檔資料，無需刪除。"); btn.innerHTML = oldText; btn.disabled = false; return; }
+            const batch = window.writeBatch(db);
+            let count = 0;
+            querySnapshot.forEach((doc) => { batch.delete(doc.ref); count++; });
+            await batch.commit();
+            alert(`✅ 已成功刪除 ${count} 筆歸檔紀錄。`);
+        } catch(e) { console.error(e); alert("❌ 刪除失敗，請檢查網路或權限"); } finally { btn.innerHTML = oldText; btn.disabled = false; }
+    }
+
+    function exportCSV() {
+        const ws = XLSX.utils.json_to_sheet(results);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "薪資結果");
+        XLSX.writeFile(wb, "薪資計算結果.csv");
+    }
+
+    function renderPreview() {
+        const name = document.getElementById('sel-emp').value;
+        const globalNote = document.getElementById('custom-note').value;
+        if(!name || name==='請選擇員工...') return;
+        const d = empMap.get(name);
+        const el = document.getElementById('payslip-entity');
+        
+        el.querySelectorAll('[data-k]').forEach(dom => {
+            const k = dom.getAttribute('data-k');
+            if(d[k]!==undefined) {
+                // ★ 隱藏金額為 0 的轉場費行
+                if(k.startsWith("轉場費_")) {
+                    const row = dom.closest('tr');
+                    if(d[k] > 0) {
+                        row.style.display = 'table-row';
+                        dom.textContent = fmtMoney(d[k]);
+                    } else {
+                        row.style.display = 'none';
+                    }
+                } else if(typeof d[k] === 'number') {
+                    if(k.includes('時') || k.includes('數') || k.includes('趴') || k.includes('費率')) {
+                        dom.textContent = fmtHours(d[k]);
+                    } else {
+                        dom.textContent = fmtMoney(d[k]);
+                    }
+                } else {
+                    dom.textContent = d[k];
+                }
+            }
+        });
+
+        // 請假明細動態顯示
+        const leaveHeader = document.getElementById('leave-section-header');
+        let next = leaveHeader.nextElementSibling;
+        while(next && next.classList.contains('leave-dynamic-row')) { const toRemove = next; next = next.nextElementSibling; toRemove.remove(); }
+        if (d['請假明細'] && d['請假明細'].length > 0) {
+            const aggregated = d['請假明細'].reduce((acc, curr) => { acc[curr.type] = (acc[curr.type] || 0) + curr.hours; return acc; }, {});
+            Object.entries(aggregated).forEach(([type, hours]) => {
+                const row = document.createElement('tr');
+                row.className = 'leave-dynamic-row leave-row'; 
+                row.innerHTML = `<td class="td-row"><div class="td-content"><span class="label">${type}</span><span class="val">${fmtHours(hours)} H</span></div></td>`;
+                leaveHeader.insertAdjacentElement('afterend', row);
+            });
+        } else {
+            const row = document.createElement('tr');
+            row.className = 'leave-dynamic-row';
+            row.innerHTML = `<td class="td-row"><div class="td-content"><span class="label text-gray-400">無請假紀錄</span><span class="val">-</span></div></td>`;
+            leaveHeader.insertAdjacentElement('afterend', row);
+        }
+
+        let footerHtml = '';
+        if (d['個人備註']) footerHtml += `<div class="footer-section"><span class="badge badge-personal">[個人]</span>${d['個人備註']}</div>`;
+        if (globalNote) footerHtml += `<div class="footer-section"><span class="badge badge-public">[公告]</span>${globalNote.replace(/\n/g, '<br>')}</div>`;
+        document.getElementById('footer-note').innerHTML = footerHtml;
+    }
+
+    async function captureAndSave(filename, saveZip=false) {
+        const element = document.getElementById('payslip-entity');
+        const viewport = document.getElementById('preview-scaler');
+        const originalTransform = viewport.style.transform;
+        viewport.style.transform = 'none'; 
+        await document.fonts.ready;
+        const canvas = await html2canvas(element, { scale: 2, useCORS: true, logging: false, windowWidth: 794 });
+        viewport.style.transform = originalTransform;
+        const imgData = canvas.toDataURL('image/jpeg', 1.0);
+        const pdf = new jsPDF('p', 'mm', 'a4');
+        pdf.addImage(imgData, 'JPEG', 0, 0, 210, 297);
+        if(saveZip) return pdf.output('blob');
+        else pdf.save(filename);
+    }
+
+    async function downloadCurrentPDF() {
+        const name = document.getElementById('sel-emp').value;
+        if(!name || name==='請選擇員工...') return alert("請先選擇員工");
+        const btn = document.querySelector('button[onclick="window.downloadCurrentPDF()"]');
+        const oldTxt = btn.innerHTML;
+        btn.disabled = true; btn.innerHTML = "⏳";
+        await captureAndSave(`${name}_薪資單.pdf`);
+        btn.disabled = false; btn.innerHTML = oldTxt;
+    }
+
+    async function downloadCurrentJPG() {
+        const name = document.getElementById('sel-emp').value;
+        if(!name || name==='請選擇員工...') return alert("請先選擇員工");
+        const element = document.getElementById('payslip-entity');
+        const viewport = document.getElementById('preview-scaler');
+        const originalTransform = viewport.style.transform;
+        viewport.style.transform = 'none';
+        const canvas = await html2canvas(element, { scale: 2 });
+        viewport.style.transform = originalTransform;
+        canvas.toBlob(blob => saveAs(blob, `${name}_薪資單.jpg`));
+    }
+
+    async function batchProcessJPG() {
+        const btn = document.getElementById('btn-batch-jpg');
+        const box = document.getElementById('progress-box');
+        const bar = document.getElementById('p-bar');
+        const txt = document.getElementById('p-text');
+        const sel = document.getElementById('sel-emp');
+        btn.disabled = true;
+        box.classList.remove('hidden');
+        const zip = new JSZip();
+        for(let i=0; i<results.length; i++) {
+            const emp = results[i];
+            sel.value = emp.姓名;
+            renderPreview(); 
+            txt.innerText = `正在處理：${emp.姓名} (${i+1}/${results.length})`;
+            bar.style.width = `${Math.round((i+1)/results.length*100)}%`;
+            await new Promise(r => setTimeout(r, 100));
+            const element = document.getElementById('payslip-entity');
+            const viewport = document.getElementById('preview-scaler');
+            const originalTransform = viewport.style.transform;
+            viewport.style.transform = 'none'; 
+            await document.fonts.ready;
+            const canvas = await html2canvas(element, { scale: 2, useCORS: true, logging: false, windowWidth: 794 });
+            viewport.style.transform = originalTransform;
+            const imgData = canvas.toDataURL('image/jpeg', 1.0);
+            const base64Data = imgData.replace(/^data:image\/(png|jpeg);base64,/, "");
+            zip.file(`${emp.姓名}_薪資單.jpg`, base64Data, {base64: true});
+        }
+        txt.innerText = "正在壓縮圖檔...";
+        const content = await zip.generateAsync({type:"blob"});
+        const datePrefix = currentDateLabel.replace(" 薪資單", "") || "薪資單";
+        saveAs(content, `${datePrefix}_全員薪資單_圖片包.zip`);
+        txt.innerText = "完成！";
+        btn.disabled = false;
+    }
+
+    async function batchProcess() {
+        const btn = document.getElementById('btn-batch');
+        const box = document.getElementById('progress-box');
+        const bar = document.getElementById('p-bar');
+        const txt = document.getElementById('p-text');
+        const sel = document.getElementById('sel-emp');
+        btn.disabled = true;
+        box.classList.remove('hidden');
+        const zip = new JSZip();
+        for(let i=0; i<results.length; i++) {
+            const emp = results[i];
+            document.getElementById('sel-emp').value = emp.姓名;
+            renderPreview();
+            txt.innerText = `正在錄製：${emp.姓名} (${i+1}/${results.length})`;
+            bar.style.width = `${Math.round((i+1)/results.length*100)}%`;
+            await new Promise(r => setTimeout(r, 100));
+            const blob = await captureAndSave(`${emp.姓名}.pdf`, true);
+            zip.file(`${emp.姓名}_薪資單.pdf`, blob);
+        }
+        txt.innerText = "正在壓縮...";
+        const content = await zip.generateAsync({type:"blob"});
+        const datePrefix = currentDateLabel.replace(" 薪資單", "") || "薪資單";
+        saveAs(content, `${datePrefix}_全員薪資單.zip`);
+        txt.innerText = "完成！";
+        btn.disabled = false;
+    }
+</script>
+</body>
+</html>

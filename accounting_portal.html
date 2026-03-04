@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>財務管理中控台 - 光祐長照</title>
+    
+    <script src="auth-guard.js"></script>
+    <script type="module" src="config.js"></script>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&display=swap" rel="stylesheet">
+    
+    <style> 
+        body { font-family: 'Noto Sans TC', sans-serif; background-color: #0f172a; color: white; }
+        .card-hover:hover { transform: translateY(-5px); box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); }
+        .glass { background: rgba(255, 255, 255, 0.05); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); }
+        .section-title { font-size: 0.75rem; color: #94a3b8; font-weight: bold; letter-spacing: 0.1em; margin-bottom: 1rem; text-transform: uppercase; border-bottom: 1px solid #334155; padding-bottom: 0.5rem; }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center relative overflow-hidden p-4">
+
+    <div class="absolute top-0 left-0 w-full h-full overflow-hidden z-0 opacity-30 pointer-events-none">
+        <div class="absolute top-[-10%] left-[-10%] w-96 h-96 bg-blue-600 rounded-full mix-blend-multiply filter blur-3xl opacity-70 animate-blob"></div>
+        <div class="absolute top-[-10%] right-[-10%] w-96 h-96 bg-emerald-600 rounded-full mix-blend-multiply filter blur-3xl opacity-70 animate-blob animation-delay-2000"></div>
+        <div class="absolute bottom-[-20%] left-[20%] w-96 h-96 bg-purple-600 rounded-full mix-blend-multiply filter blur-3xl opacity-70 animate-blob animation-delay-4000"></div>
+    </div>
+
+    <div id="loading-screen" class="relative z-10 text-center">
+        <div class="text-2xl font-bold animate-pulse">系統連線中...</div>
+    </div>
+
+    <div id="portal-section" class="hidden relative z-10 w-full max-w-5xl animate-fade-in">
+        <div class="flex justify-between items-end mb-8 border-b border-slate-700 pb-4">
+            <div>
+                <h1 class="text-3xl font-black tracking-widest">財務中控台</h1>
+                <p class="text-slate-400 font-bold mt-1">使用者：<span id="user-name" class="text-white">---</span></p>
+            </div>
+            <button onclick="logout()" class="text-xs text-slate-500 hover:text-white border border-slate-700 px-3 py-1 rounded transition">登出</button>
+        </div>
+
+        <div class="grid gap-8">
+            
+            <div>
+                <h3 class="section-title">Core Financials (總帳核心)</h3>
+                <div class="grid md:grid-cols-1 gap-6">
+                    <div onclick="goTo('accounting.html')" class="card-hover glass p-6 rounded-2xl cursor-pointer hover:bg-white/10 transition border-l-4 border-blue-500 flex items-center justify-between">
+                        <div>
+                            <div class="flex items-center gap-3 mb-2">
+                                <span class="text-4xl">📊</span>
+                                <h2 class="text-2xl font-bold text-white">專業會計總帳系統</h2>
+                            </div>
+                            <p class="text-sm text-slate-400">日記帳、分類帳、損益表、資產負債表、薪資與流水帳拋轉中心。</p>
+                        </div>
+                        <div class="text-3xl text-slate-600">➔</div>
+                    </div>
+                </div>
+            </div>
+
+            <div>
+                <h3 class="section-title">Daily Operations (日常作業)</h3>
+                <div class="grid md:grid-cols-3 gap-6">
+                    
+                    <div onclick="goTo('income_management.html')" class="card-hover glass p-6 rounded-2xl cursor-pointer hover:bg-white/10 transition border-l-4 border-indigo-500">
+                        <div class="flex justify-between items-start mb-2">
+                            <span class="text-3xl">💰</span>
+                            <span class="text-[10px] bg-indigo-900 text-indigo-200 px-2 py-1 rounded font-bold">REVENUE</span>
+                        </div>
+                        <h2 class="text-lg font-bold mb-1 text-indigo-100">應收帳款管理</h2>
+                        <p class="text-xs text-slate-400">民眾自負額收款、政府補助核銷。</p>
+                    </div>
+
+                    <div onclick="goTo('expense_log.html')" class="card-hover glass p-6 rounded-2xl cursor-pointer hover:bg-white/10 transition border-l-4 border-emerald-500">
+                        <div class="flex justify-between items-start mb-2">
+                            <span class="text-3xl">📝</span>
+                            <span class="text-[10px] bg-emerald-900 text-emerald-200 px-2 py-1 rounded font-bold">ADMIN TOOL</span>
+                        </div>
+                        <h2 class="text-lg font-bold mb-1 text-emerald-100">行政收支流水帳</h2>
+                        <p class="text-xs text-slate-400">查看零用金餘額、補入現金、紀錄雜支。</p>
+                    </div>
+
+                    <div onclick="goTo('bill_reminder.html')" class="card-hover glass p-6 rounded-2xl cursor-pointer hover:bg-white/10 transition border-l-4 border-yellow-500">
+                        <div class="flex justify-between items-start mb-2">
+                            <span class="text-3xl">🔔</span>
+                            <span class="text-[10px] bg-yellow-900 text-yellow-200 px-2 py-1 rounded font-bold">URGENT</span>
+                        </div>
+                        <h2 class="text-lg font-bold mb-1 text-yellow-100">待繳帳單提醒</h2>
+                        <p class="text-xs text-slate-400">待繳費項目確認、匯款作業。</p>
+                    </div>
+
+                </div>
+            </div>
+
+            <div>
+                <h3 class="section-title">Configuration (設定)</h3>
+                <div class="grid md:grid-cols-3 gap-6">
+                    <div onclick="goTo('accounting_accounts.html')" class="card-hover glass p-4 rounded-xl cursor-pointer flex items-center gap-3 hover:bg-white/5 transition border border-slate-700">
+                        <div class="bg-slate-800 p-2 rounded-lg text-slate-300">📂</div>
+                        <div>
+                            <div class="font-bold text-sm text-slate-300">會計科目設定</div>
+                            <div class="text-[10px] text-slate-500">Chart of Accounts</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        // 綁定全域函式
+        window.logout = logout;
+        window.goTo = goTo;
+
+        // 等待 config.js 初始化
+        const checkInit = setInterval(() => {
+            if (window.auth) {
+                clearInterval(checkInit);
+                initPortal();
+            }
+        }, 100);
+
+        function initPortal() {
+            // 因為 auth-guard.js 已經會擋掉未登入的人，所以能執行到這裡代表已登入
+            // 我們只需要讀取 Session 顯示名字即可
+            try {
+                const session = sessionStorage.getItem('kuangyou_user');
+                if (session) {
+                    const user = JSON.parse(session);
+                    document.getElementById('user-name').innerText = user.name || '管理員';
+                    document.getElementById('loading-screen').classList.add('hidden');
+                    document.getElementById('portal-section').classList.remove('hidden');
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        async function logout() {
+            if(confirm("確定登出？")) {
+                await window.signOut(window.auth);
+                sessionStorage.removeItem('kuangyou_user');
+                window.location.href = 'index.html';
+            }
+        }
+
+        function goTo(url) { window.location.href = url; }
+    </script>
+
+    <style>
+        @keyframes blob {
+            0% { transform: translate(0px, 0px) scale(1); }
+            33% { transform: translate(30px, -50px) scale(1.1); }
+            66% { transform: translate(-20px, 20px) scale(0.9); }
+            100% { transform: translate(0px, 0px) scale(1); }
+        }
+        .animate-blob { animation: blob 7s infinite; }
+        .animation-delay-2000 { animation-delay: 2s; }
+        .animation-delay-4000 { animation-delay: 4s; }
+        .animate-fade-in { animation: fadeIn 0.5s ease-out forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</body>
+</html>

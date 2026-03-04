@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>行政零用金管理 (v2.3 修正版)</title>
+    
+    <script src="auth-guard.js"></script>
+    <script type="module" src="config.js"></script>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dayjs/1.11.10/dayjs.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+
+    
+
+    <style>
+        body { font-family: 'Noto Sans TC', sans-serif; background-color: #f8fafc; }
+        .safe-area-bottom { padding-bottom: env(safe-area-inset-bottom); }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        const CATEGORIES = ["膳食費", "文具用品", "郵電費", "交通/油資", "修繕費", "雜項支出", "交際費", "其他"];
+        
+        const ExpenseLogApp = () => {
+            const [entries, setEntries] = useState([]);
+            const [loading, setLoading] = useState(false);
+            const [filterMonth, setFilterMonth] = useState(dayjs().format('YYYY-MM'));
+            const [currentUser, setCurrentUser] = useState(JSON.parse(sessionStorage.getItem('kuangyou_user') || '{}'));
+            const [cashBalance, setCashBalance] = useState(0);
+
+            const [accountOptions, setAccountOptions] = useState([]); 
+
+            // 模式狀態：expense(支出), income(補入), return(繳回)
+            const [mode, setMode] = useState('expense'); 
+            
+            // 表單欄位
+            const [date, setDate] = useState(dayjs().format('YYYY-MM-DD'));
+            const [item, setItem] = useState('');
+            const [amount, setAmount] = useState('');
+            const [category, setCategory] = useState('膳食費');
+            
+            // Payer 狀態 
+            const [selectedAccount, setSelectedAccount] = useState(''); 
+            const [expenseType, setExpenseType] = useState('petty_cash'); 
+
+            const [note, setNote] = useState('');
+            const backLink = currentUser.role === 'manager' ? 'accounting_portal.html' : 'admin_portal.html';
+
+            useEffect(() => {
+                const startStr = `${filterMonth}-01`;
+                const endStr = dayjs(filterMonth).endOf('month').format('YYYY-MM-DD');
+                
+                const q = window.query(
+                    window.collection(window.db, "accounting_expenses"),
+                    window.where("date", ">=", startStr),
+                    window.where("date", "<=", endStr),
+                    window.orderBy("date", "desc")
+                );
+
+                const unsub1 = window.onSnapshot(q, (snapshot) => {
+                    const list = [];
+                    snapshot.forEach(doc => list.push({ id: doc.id, ...doc.data() }));
+                    setEntries(list);
+                });
+
+                const unsub2 = window.onSnapshot(window.doc(window.db, "system_settings", "petty_cash"), (doc) => {
+                    if (doc.exists()) setCashBalance(doc.data().balance || 0);
+                    else window.setDoc(window.doc(window.db, "system_settings", "petty_cash"), { balance: 0 });
+                });
+
+                // ★★★ 修正：抓取 1101 ~ 1105 及 28xx ★★★
+                const fetchAccounts = async () => {
+                    try {
+                        const qAcc = window.query(window.collection(window.db, "accounting_accounts"), window.orderBy("code"));
+                        const snap = await window.getDocs(qAcc);
+                        const opts = [];
+                        snap.forEach(d => {
+                            const data = d.data();
+                            const code = String(data.code);
+                            // 修正點：加入 code.startsWith('1101')
+                            if (code.startsWith('1101') || code.startsWith('1102') || code.startsWith('1103') || code.startsWith('1104') || code.startsWith('1105') || code.startsWith('28')) {
+                                opts.push({ code: data.code, name: data.name });
+                            }
+                        });
+                        
+                        if (opts.length === 0) {
+                            opts.push({ code: '1102', name: '銀行存款' });
+                            opts.push({ code: '2801', name: '股東往來' });
+                        }
+                        setAccountOptions(opts);
+                        setSelectedAccount(opts[0]?.code || '');
+                    } catch(e) { console.error("Fetch accounts error", e); }
+                };
+                fetchAccounts();
+
+                return () => { unsub1(); unsub2(); };
+            }, [filterMonth]);
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                if (!item || !amount) return alert("請填寫項目與金額");
+                if (!window.isAuthReady && !window.auth.currentUser) return alert("⚠️ 資料庫連線中，請稍後...");
+
+                setLoading(true);
+                const val = Number(amount);
+
+                let finalPayer = '';
+                let finalCategory = category;
+                
+                if (mode === 'income') {
+                    finalCategory = '零用金補給';
+                    finalPayer = selectedAccount; 
+                } else if (mode === 'return') {
+                    finalCategory = '繳回現金';
+                    finalPayer = selectedAccount; 
+                } else { 
+                    if (expenseType === 'petty_cash') finalPayer = '1101'; 
+                    else if (expenseType === 'boss_paid') finalPayer = '2801'; 
+                    else if (expenseType === 'bank') finalPayer = selectedAccount; 
+                }
+
+                try {
+                    await window.addDoc(window.collection(window.db, "accounting_expenses"), {
+                        date,
+                        type: mode, 
+                        item: (mode === 'income' ? `[入金] ` : (mode === 'return' ? `[繳回] ` : ``)) + item,
+                        amount: val,
+                        category: finalCategory,
+                        payer: finalPayer, 
+                        note,
+                        recorder: currentUser.name || 'Admin',
+                        status: 'pending',
+                        createdAt: new Date().toISOString()
+                    });
+
+                    const pettyRef = window.doc(window.db, "system_settings", "petty_cash");
+
+                    if (mode === 'income') {
+                        await window.updateDoc(pettyRef, { balance: window.increment(val) });
+                    } else if (mode === 'return') {
+                        await window.updateDoc(pettyRef, { balance: window.increment(-val) });
+                    } else if (mode === 'expense' && expenseType === 'petty_cash') {
+                        await window.updateDoc(pettyRef, { balance: window.increment(-val) });
+                    }
+                    
+                    setItem(''); setAmount(''); setNote('');
+                    
+                } catch (err) { console.error(err); alert("儲存失敗：" + err.message); }
+                setLoading(false);
+            };
+
+            const handleDelete = async (ent) => {
+                if (ent.status === 'locked') return alert("⛔ 此筆資料已結帳，無法刪除！");
+                if (!confirm(`確定刪除此筆紀錄？\n金額: $${ent.amount}\n\n注意：這將會「回滾」餘額變動！`)) return;
+                
+                try {
+                    await window.deleteDoc(window.doc(window.db, "accounting_expenses", ent.id));
+                    const val = Number(ent.amount);
+                    const pettyRef = window.doc(window.db, "system_settings", "petty_cash");
+
+                    if (ent.type === 'income') {
+                        await window.updateDoc(pettyRef, { balance: window.increment(-val) });
+                    } else if (ent.type === 'return') {
+                        await window.updateDoc(pettyRef, { balance: window.increment(val) });
+                    } else if (ent.type === 'expense' && ent.payer === '1101') { 
+                        await window.updateDoc(pettyRef, { balance: window.increment(val) });
+                    }
+                } catch(e) { alert("刪除失敗"); }
+            };
+
+            const getPayerName = (code) => {
+                if (code === '1101') return '零用金';
+                const found = accountOptions.find(a => a.code === code);
+                return found ? found.name : code; 
+            };
+
+            return (
+                <div className="max-w-md mx-auto min-h-screen flex flex-col bg-slate-50 shadow-2xl relative">
+                    <div className="bg-slate-900 text-white p-5 sticky top-0 z-20 shadow-lg rounded-b-3xl">
+                        <div className="flex justify-between items-start mb-4">
+                            <div>
+                                <div className="text-xs text-slate-400 font-bold tracking-wider mb-1">CASH BOX BALANCE</div>
+                                <div className={`text-4xl font-black font-mono ${cashBalance < 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                                    ${new Intl.NumberFormat().format(cashBalance)}
+                                </div>
+                                <div className="text-[10px] text-slate-500 mt-1">目前零用金餘額 (實體現金)</div>
+                            </div>
+                            <a href={backLink} className="text-xs border border-slate-600 px-3 py-1 rounded-full hover:bg-slate-700 transition">退出</a>
+                        </div>
+                        
+                        <div className="flex bg-slate-800 p-1 rounded-xl gap-1">
+                            <button onClick={()=>setMode('expense')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1 ${mode==='expense' ? 'bg-red-500 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}>
+                                <span>💸</span> 支出
+                            </button>
+                            <button onClick={()=>setMode('income')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1 ${mode==='income' ? 'bg-emerald-500 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}>
+                                <span>📥</span> 補入
+                            </button>
+                            <button onClick={()=>setMode('return')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1 ${mode==='return' ? 'bg-blue-500 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}>
+                                <span>📤</span> 繳回
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="p-4 bg-white m-4 rounded-2xl shadow-sm border border-slate-100">
+                        <form onSubmit={handleSubmit} className="space-y-3">
+                            <div className="grid grid-cols-3 gap-2">
+                                <div className="col-span-1">
+                                    <label className="text-xs font-bold text-slate-400 block mb-1">日期</label>
+                                    <input type="date" required value={date} onChange={e=>setDate(e.target.value)} className="w-full p-2 rounded-lg border border-slate-200 text-sm font-bold bg-slate-50" />
+                                </div>
+                                <div className="col-span-2">
+                                    <label className="text-xs font-bold text-slate-400 block mb-1">
+                                        {mode==='expense' ? '消費項目' : (mode==='income' ? '來源說明' : '繳回說明')}
+                                    </label>
+                                    <input type="text" required 
+                                        placeholder={mode==='expense' ? '例如: 買便當' : (mode==='income' ? '例如: 老闆撥款' : '例如: 存入銀行')} 
+                                        value={item} onChange={e=>setItem(e.target.value)} className="w-full p-2 rounded-lg border border-slate-200 text-sm" />
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                                {mode === 'expense' && (
+                                    <div>
+                                        <label className="text-xs font-bold text-slate-400 block mb-1">分類</label>
+                                        <select value={category} onChange={e=>setCategory(e.target.value)} className="w-full p-2 rounded-lg border border-slate-200 text-sm bg-white">
+                                            {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                                        </select>
+                                    </div>
+                                )}
+
+                                {(mode === 'income' || mode === 'return') && (
+                                    <div>
+                                        <label className={`text-xs font-bold block mb-1 ${mode==='income'?'text-emerald-600':'text-blue-600'}`}>
+                                            {mode==='income' ? '資金來源' : '繳回對象'}
+                                        </label>
+                                        <select value={selectedAccount} onChange={e=>setSelectedAccount(e.target.value)} className={`w-full p-2 rounded-lg border-2 text-sm font-bold ${mode==='income'?'border-emerald-200 bg-emerald-50 text-emerald-900':'border-blue-200 bg-blue-50 text-blue-900'}`}>
+                                            {accountOptions.map(opt => <option key={opt.code} value={opt.code}>{opt.code} {opt.name}</option>)}
+                                        </select>
+                                    </div>
+                                )}
+
+                                <div className={mode==='expense' ? '' : 'col-span-1'}>
+                                    <label className="text-xs font-bold text-slate-400 block mb-1">金額</label>
+                                    <input type="number" required placeholder="$" value={amount} onChange={e=>setAmount(e.target.value)} className={`w-full p-2 rounded-lg border text-sm font-mono font-bold text-right text-lg ${mode==='income'?'border-emerald-200 text-emerald-600':(mode==='return'?'border-blue-200 text-blue-600':'border-red-200 text-red-600')}`} />
+                                </div>
+                            </div>
+
+                            {mode === 'expense' && (
+                                <div>
+                                    <label className="text-xs font-bold text-slate-400 block mb-1">從哪裡扣款?</label>
+                                    <div className="flex gap-2 mb-2">
+                                        <label className={`flex-1 border rounded p-2 text-xs text-center cursor-pointer ${expenseType==='petty_cash'?'bg-emerald-100 border-emerald-500 font-bold text-emerald-800':'bg-white'}`}>
+                                            <input type="radio" name="etype" value="petty_cash" checked={expenseType==='petty_cash'} onChange={e=>setExpenseType(e.target.value)} className="hidden"/>
+                                            📦 零用金
+                                        </label>
+                                        <label className={`flex-1 border rounded p-2 text-xs text-center cursor-pointer ${expenseType==='boss_paid'?'bg-orange-100 border-orange-500 font-bold text-orange-800':'bg-white'}`}>
+                                            <input type="radio" name="etype" value="boss_paid" checked={expenseType==='boss_paid'} onChange={e=>setExpenseType(e.target.value)} className="hidden"/>
+                                            👑 代墊
+                                        </label>
+                                        <label className={`flex-1 border rounded p-2 text-xs text-center cursor-pointer ${expenseType==='bank'?'bg-blue-100 border-blue-500 font-bold text-blue-800':'bg-white'}`}>
+                                            <input type="radio" name="etype" value="bank" checked={expenseType==='bank'} onChange={e=>setExpenseType(e.target.value)} className="hidden"/>
+                                            💳 轉帳
+                                        </label>
+                                    </div>
+                                    
+                                    {expenseType === 'bank' && (
+                                        <select value={selectedAccount} onChange={e=>setSelectedAccount(e.target.value)} className="w-full p-2 rounded-lg border-2 border-blue-200 text-sm bg-blue-50 text-blue-900 font-bold mb-2">
+                                            {accountOptions.filter(a=>a.code.startsWith('11')).map(opt => <option key={opt.code} value={opt.code}>{opt.code} {opt.name}</option>)}
+                                        </select>
+                                    )}
+                                    
+                                    {expenseType !== 'petty_cash' && <div className="text-[10px] text-orange-500">* 此選項不會扣除上方零用金餘額</div>}
+                                </div>
+                            )}
+
+                            <button type="submit" disabled={loading} className={`w-full text-white font-bold py-3 rounded-xl shadow-lg transition transform active:scale-95 flex justify-center items-center gap-2 ${mode==='income'?'bg-emerald-600 hover:bg-emerald-700':(mode==='return'?'bg-blue-600 hover:bg-blue-700':'bg-red-500 hover:bg-red-600')}`}>
+                                {loading ? '處理中...' : (mode==='income' ? '📥 確認入金 (增加餘額)' : (mode==='return' ? '📤 確認繳回 (扣除餘額)' : '💸 確認支出'))}
+                            </button>
+                        </form>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto px-4 pb-safe-area-bottom">
+                        <div className="flex justify-between items-center mb-2 px-2">
+                            <h3 className="text-xs font-bold text-slate-400">本月紀錄 ({dayjs(filterMonth).format('YYYY/MM')})</h3>
+                            <input type="month" value={filterMonth} onChange={e=>setFilterMonth(e.target.value)} className="bg-transparent text-xs border border-slate-200 rounded p-1" />
+                        </div>
+                        
+                        <div className="space-y-3 pb-20">
+                            {entries.length === 0 ? (
+                                <div className="text-center text-slate-300 py-10 text-sm">本月尚無紀錄</div>
+                            ) : (
+                                entries.map(ent => (
+                                    <div key={ent.id} className={`p-3 rounded-xl border shadow-sm flex justify-between items-center relative ${ent.type==='income' ? 'bg-emerald-50 border-emerald-100' : (ent.type==='return' ? 'bg-blue-50 border-blue-100' : 'bg-white border-slate-100')} ${ent.status==='locked'?'opacity-60 grayscale':''}`}>
+                                        <div className="flex-1">
+                                            <div className="flex items-center gap-2">
+                                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${ent.type==='income'?'bg-emerald-200 text-emerald-800':(ent.type==='return'?'bg-blue-200 text-blue-800':'bg-slate-200 text-slate-600')}`}>
+                                                    {dayjs(ent.date).format('MM/DD')}
+                                                </span>
+                                                <span className="font-bold text-slate-800">{ent.item}</span>
+                                                {ent.status === 'locked' && <span className="text-[10px] bg-gray-600 text-white px-1.5 py-0.5 rounded-full flex items-center gap-1">🔒 已結帳</span>}
+                                            </div>
+                                            <div className="text-xs text-slate-400 mt-1 flex gap-2">
+                                                <span>{ent.type==='income' ? '入金' : (ent.type==='return' ? '繳回' : ent.category)}</span>
+                                                <span>•</span>
+                                                <span>{ent.recorder}</span>
+                                                <span className="text-orange-500 font-bold">• {getPayerName(ent.payer)}</span>
+                                            </div>
+                                        </div>
+                                        <div className="text-right">
+                                            <div className={`font-bold text-lg font-mono ${ent.type==='income'?'text-emerald-600':(ent.type==='return'?'text-blue-600':'text-slate-700')}`}>
+                                                {ent.type==='income' ? '+' : '-'}${new Intl.NumberFormat().format(ent.amount)}
+                                            </div>
+                                            {ent.status !== 'locked' && (
+                                                <button onClick={() => handleDelete(ent)} className="text-[10px] text-red-300 hover:text-red-500 underline">刪除</button>
+                                            )}
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<ExpenseLogApp />);
+    </script>
+</body>
+</html>
