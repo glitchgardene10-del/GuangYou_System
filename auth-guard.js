@@ -1,5 +1,5 @@
 /**
- * auth-guard.js (v2.1 雙角色專用版)
+ * auth-guard.js (v2.3 完整行政權限版)
  * 用途：
  * 1. 確保使用者已登入。
  * 2. 嚴格區分「老闆 (Manager)」與「行政 (Admin)」。
@@ -46,7 +46,10 @@
             'attendance_admin.html',   // 考勤管理
             'salary.html',             // 行政薪資
             'salary_caregiver.html',   // 居服薪資
-            'assessment.html'          // 考核系統
+            'assessment.html',         // 考核系統
+            'income_management.html',  // 應收帳款管理
+            'expense_log.html',        // ★ 新增：零用金管理
+            'bill_reminder.html'       // ★ 新增：帳單提醒
         ];
 
         // 判斷角色權限
