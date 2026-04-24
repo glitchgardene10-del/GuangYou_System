@@ -258,6 +258,8 @@
             };
 
             const processUserCollection = async () => {
+                if (loading) return;
+                
                 const { item, method, useSubsidy } = userCollectModal;
                 const amt = Number(userCollectModal.actualAmount) || 0;
                 const diff = item.amount - amt;
@@ -376,25 +378,67 @@
                 setLoading(false);
             };
 
-            const handleUndo = async (item) => {
-                if (item.paymentMethod === 'bank' && !isManager) return alert("⛔ 權限不足");
-                if (!confirm(`確定撤銷？`)) return;
+const handleUndo = async (item) => {
+                if (item.paymentMethod === 'bank' && !isManager) return alert("⛔ 權限不足：只有老闆可以撤銷匯款紀錄。");
+                if (!confirm(`⚠️ 確定要撤銷【${item.caseNo || item.title}】的收款紀錄嗎？\n系統將自動同步：\n1. 恢復為「未繳」狀態\n2. 扣回零用金餘額\n3. 刪除相關流水帳與傳票`)) return;
+
                 setLoading(true);
                 try {
                     const batch = window.writeBatch(window.db);
                     const itemRef = window.doc(window.db, "income_receivables", item.id);
+                    
+                    // 先將這筆紀錄要刪除的 ID 與金額暫存起來，確保執行批次時變數與型別完全正確
+                    const targetExpenseId = item.linkedExpenseId;
+                    const targetJournalId = item.linkedJournalId;
+                    const targetVirtualJournalId = item.virtualJournalId;
+                    const rollbackAmount = Number(item.amount) || 0;
+
+                    // 1. 恢復應收帳款為 Pending 狀態，並清除所有相關的入帳註記
                     batch.update(itemRef, {
-                        status: 'pending', paymentMethod: window.deleteField(), actualAmount: window.deleteField(), paidAt: window.deleteField(),
-                        linkedExpenseId: window.deleteField(), linkedJournalId: window.deleteField(), virtualJournalId: window.deleteField(), confirmer: window.deleteField(), receiver: window.deleteField()
+                        status: 'pending',
+                        paymentMethod: window.deleteField(),
+                        actualAmount: window.deleteField(),
+                        paidAt: window.deleteField(),
+                        linkedExpenseId: window.deleteField(),
+                        linkedJournalId: window.deleteField(),
+                        virtualJournalId: window.deleteField(),
+                        confirmer: window.deleteField(),
+                        receiver: window.deleteField(),
+                        reportTime: window.deleteField(),
+                        reporter: window.deleteField()
                     });
+
+                    // 2. 如果當初是現金收款，處理餘額回滾與流水帳徹底刪除
                     if (item.paymentMethod === 'cash') {
-                        batch.update(window.doc(window.db, "system_settings", "petty_cash"), { balance: window.increment(-item.amount) });
-                        if (item.linkedExpenseId) batch.delete(window.doc(window.db, "accounting_expenses", item.linkedExpenseId));
+                        if (rollbackAmount > 0) {
+                            const pettyRef = window.doc(window.db, "system_settings", "petty_cash");
+                            batch.update(pettyRef, { balance: window.increment(-rollbackAmount) });
+                        }
+                        if (targetExpenseId) {
+                            const expenseRef = window.doc(window.db, "accounting_expenses", targetExpenseId);
+                            batch.delete(expenseRef);
+                        }
                     }
-                    if (item.linkedJournalId) batch.delete(window.doc(window.db, "accounting_journal", item.linkedJournalId));
-                    if (item.virtualJournalId) batch.delete(window.doc(window.db, "accounting_journal", item.virtualJournalId)); 
-                    await batch.commit(); alert("✅ 已撤銷"); fetchData();
-                } catch(e) { alert("撤銷失敗"); }
+                    
+                    // 3. 刪除對應的會計傳票
+                    if (targetJournalId) {
+                        const journalRef = window.doc(window.db, "accounting_journal", targetJournalId);
+                        batch.delete(journalRef);
+                    }
+
+                    // 4. 如果有全額墊付或差額墊付產生的虛擬傳票，一併刪除
+                    if (targetVirtualJournalId) {
+                        const vJournalRef = window.doc(window.db, "accounting_journal", targetVirtualJournalId);
+                        batch.delete(vJournalRef);
+                    }
+
+                    await batch.commit(); 
+                    alert("✅ 收款紀錄已撤銷，所有連動帳務已回復！"); 
+                    fetchData(); 
+                } catch(e) { 
+                    console.error("Undo error:", e);
+                    alert("撤銷失敗：" + e.message); 
+                }
                 setLoading(false);
             };
 
@@ -724,7 +768,7 @@
 
                                     <div className="flex gap-2 pt-2">
                                         <button onClick={()=>setUserCollectModal({show:false, item:null, method:'cash', actualAmount: '', useSubsidy:true})} className="flex-1 bg-gray-200 text-gray-600 font-bold py-2 rounded-lg hover:bg-gray-300">取消</button>
-                                        <button onClick={processUserCollection} className="flex-1 bg-blue-600 text-white font-bold py-2 rounded-lg hover:bg-blue-700 shadow-lg">確認結案</button>
+                                        <button onClick={processUserCollection} disabled={loading} className={`flex-1 text-white font-bold py-2 rounded-lg shadow-lg ${loading ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}>{loading ? '處理中...' : '確認結案'}</button>
                                     </div>
                                 </div>
                             </div>
