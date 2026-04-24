@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>行政零用金管理 (v2.3 修正版)</title>
+    <title>行政零用金管理 (v2.4 零用金科目標示修復版)</title>
     
     <script src="auth-guard.js"></script>
     <script type="module" src="config.js"></script>
@@ -14,8 +14,6 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dayjs/1.11.10/dayjs.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
-
-    
 
     <style>
         body { font-family: 'Noto Sans TC', sans-serif; background-color: #f8fafc; }
@@ -77,7 +75,6 @@
                     else window.setDoc(window.doc(window.db, "system_settings", "petty_cash"), { balance: 0 });
                 });
 
-                // ★★★ 修正：抓取 1101 ~ 1105 及 28xx ★★★
                 const fetchAccounts = async () => {
                     try {
                         const qAcc = window.query(window.collection(window.db, "accounting_accounts"), window.orderBy("code"));
@@ -86,7 +83,7 @@
                         snap.forEach(d => {
                             const data = d.data();
                             const code = String(data.code);
-                            // 修正點：加入 code.startsWith('1101')
+                            // 抓取 1101 ~ 1105 及 28xx
                             if (code.startsWith('1101') || code.startsWith('1102') || code.startsWith('1103') || code.startsWith('1104') || code.startsWith('1105') || code.startsWith('28')) {
                                 opts.push({ code: data.code, name: data.name });
                             }
@@ -123,7 +120,8 @@
                     finalCategory = '繳回現金';
                     finalPayer = selectedAccount; 
                 } else { 
-                    if (expenseType === 'petty_cash') finalPayer = '1101'; 
+                    // ★ 修復點 1：將 petty_cash 的付款來源指定為 1105 (而非 1101)
+                    if (expenseType === 'petty_cash') finalPayer = '1105'; 
                     else if (expenseType === 'boss_paid') finalPayer = '2801'; 
                     else if (expenseType === 'bank') finalPayer = selectedAccount; 
                 }
@@ -159,26 +157,47 @@
             };
 
             const handleDelete = async (ent) => {
-                if (ent.status === 'locked') return alert("⛔ 此筆資料已結帳，無法刪除！");
-                if (!confirm(`確定刪除此筆紀錄？\n金額: $${ent.amount}\n\n注意：這將會「回滾」餘額變動！`)) return;
+                if (ent.status === 'locked') {
+                    // 🌟 開放特權：如果是鎖定狀態，跳出嚴重警告，但允許老闆強制刪除幽靈帳目
+                    if (!confirm("⚠️ 警告：此筆資料已標記為鎖定！\n如果您確定這是系統連點產生的「幽靈重複帳目」，請按「確定」強制刪除並退回零用金餘額。")) return;
+                } else {
+                    if (!confirm(`確定刪除此筆紀錄？\n金額: $${ent.amount}\n\n注意：系統將同步「回滾」您的零用金餘額！`)) return;
+                }
                 
                 try {
-                    await window.deleteDoc(window.doc(window.db, "accounting_expenses", ent.id));
+                    const batch = window.writeBatch(window.db);
+                    
+                    // 1. 刪除該筆流水帳
+                    const expenseRef = window.doc(window.db, "accounting_expenses", ent.id);
+                    batch.delete(expenseRef);
+                    
+                    // 2. 處理餘額回滾
                     const val = Number(ent.amount);
                     const pettyRef = window.doc(window.db, "system_settings", "petty_cash");
 
                     if (ent.type === 'income') {
-                        await window.updateDoc(pettyRef, { balance: window.increment(-val) });
+                        // 撤銷入金/收款：扣除餘額
+                        batch.update(pettyRef, { balance: window.increment(-val) });
                     } else if (ent.type === 'return') {
-                        await window.updateDoc(pettyRef, { balance: window.increment(val) });
-                    } else if (ent.type === 'expense' && ent.payer === '1101') { 
-                        await window.updateDoc(pettyRef, { balance: window.increment(val) });
+                        // 撤銷繳回：加回餘額
+                        batch.update(pettyRef, { balance: window.increment(val) });
+                    } else if (ent.type === 'expense') {
+                        if (ent.payer === '1101' || ent.payer === 'petty_cash' || ent.payer === '1105') { 
+                            batch.update(pettyRef, { balance: window.increment(val) });
+                        }
                     }
-                } catch(e) { alert("刪除失敗"); }
+
+                    // 3. 確保兩者同時成功
+                    await batch.commit();
+                    alert("✅ 刪除成功，餘額已正確回滾！");
+                } catch(e) { 
+                    console.error(e);
+                    alert("❌ 刪除失敗：" + e.message); 
+                }
             };
 
             const getPayerName = (code) => {
-                if (code === '1101') return '零用金';
+                if (code === '1105' || code === '1101' || code === 'petty_cash') return '零用金';
                 const found = accountOptions.find(a => a.code === code);
                 return found ? found.name : code; 
             };
@@ -319,9 +338,9 @@
                                             <div className={`font-bold text-lg font-mono ${ent.type==='income'?'text-emerald-600':(ent.type==='return'?'text-blue-600':'text-slate-700')}`}>
                                                 {ent.type==='income' ? '+' : '-'}${new Intl.NumberFormat().format(ent.amount)}
                                             </div>
-                                            {ent.status !== 'locked' && (
+                                            {/* 直接顯示按鈕，權限由 handleDelete 內的邏輯把關 */}
                                                 <button onClick={() => handleDelete(ent)} className="text-[10px] text-red-300 hover:text-red-500 underline">刪除</button>
-                                            )}
+                                            
                                         </div>
                                     </div>
                                 ))
