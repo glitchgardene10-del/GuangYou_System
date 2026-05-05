@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>居服員薪資系統 (v16.8 轉場費詳列版)</title>
+    <title>居服員薪資系統 (v17.0 BA07擴充版)</title>
     
     <script src="auth-guard.js"></script>
     <script type="module" src="config.js"></script>
@@ -85,9 +85,9 @@
     <div class="max-w-[1800px] mx-auto bg-white p-8 rounded-2xl shadow-xl border border-slate-200">
         <div class="flex flex-col mb-8 border-b pb-4">
             <div class="flex justify-between items-center">
-                <h1 class="text-3xl font-extrabold text-slate-800 tracking-tight">💰 居服員薪資系統 <span class="text-sm bg-blue-100 text-blue-700 px-2 py-1 rounded ml-2 align-middle font-normal">v16.8 轉場費詳列版</span></h1>
+                <h1 class="text-3xl font-extrabold text-slate-800 tracking-tight">💰 居服員薪資系統 <span class="text-sm bg-blue-100 text-blue-700 px-2 py-1 rounded ml-2 align-middle font-normal">v17.0 BA07擴充版</span></h1>
                 <div class="flex gap-3">
-                    <button onclick="location.reload()" class="text-sm text-slate-500 hover:text-red-500 font-bold px-4 py-2 border border-slate-300 rounded hover:bg-slate-50 transition">↺ 重置系統</button>
+                    <button onclick="window.resetCaregiverSalarySession()" class="text-sm text-slate-500 hover:text-red-500 font-bold px-4 py-2 border border-slate-300 rounded hover:bg-slate-50 transition">↺ 重置系統</button>
                 </div>
             </div>
             <div id="firebase-status" class="mt-2 text-sm font-bold text-slate-400 flex items-center gap-2">
@@ -107,13 +107,114 @@
                 <input type="file" id="fileA" accept=".xlsx,.xls,.csv" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" onchange="window.loadFile(this, 'a')">
                 <div class="text-3xl mb-2 text-slate-400 pointer-events-none">📄</div>
                 <h3 class="font-bold text-slate-700 text-sm mb-1 pointer-events-none">2. 拆帳表明細</h3>
-                <p id="msg-a" class="text-xs text-slate-400 pointer-events-none">計算 AA11, AA05, AA06</p>
+                <p id="msg-a" class="text-xs text-slate-400 pointer-events-none">計算 AA11, AA05, AA06, BA07</p>
             </div>
             <div id="drop-b" class="drop-zone group border-purple-300 bg-purple-50">
                 <input type="file" id="fileB" accept=".xlsx,.xls,.csv" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" onchange="window.loadFile(this, 'b')">
                 <div class="text-3xl mb-2 text-purple-400 pointer-events-none">🚌</div>
                 <h3 class="font-bold text-purple-700 text-sm mb-1 pointer-events-none">3. 獎勵津貼清冊</h3>
                 <p id="msg-b" class="text-xs text-slate-400 pointer-events-none">計算偏鄉/交通</p>
+            </div>
+        </div>
+
+        <div class="mb-10 bg-slate-50 border border-slate-200 rounded-2xl p-6 shadow-sm">
+            <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-4">
+                <div>
+                    <h3 class="text-xl font-bold text-slate-800">居服員歷史結算查詢</h3>
+                    <p class="text-sm text-slate-500 mt-1">直接查詢已歸檔到系統的居服員薪資摘要，不需要重新匯入 Excel。</p>
+                </div>
+                <div class="flex flex-col sm:flex-row sm:items-center gap-3">
+                    <input type="month" id="archived-month" onchange="window.persistCaregiverSessionCache()" class="border border-slate-300 rounded-lg px-3 py-2 text-sm font-bold text-slate-700 bg-white">
+                    <button onclick="window.loadArchivedCaregiverPayroll()" class="bg-slate-700 hover:bg-slate-800 text-white font-bold px-4 py-2 rounded-lg shadow transition">
+                        查詢已歸檔薪資
+                    </button>
+                </div>
+            </div>
+            <div id="archived-history-section" class="hidden">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                    <div class="bg-white border border-slate-200 rounded-xl p-4">
+                        <div class="text-xs font-bold text-slate-500">已歸檔人數</div>
+                        <div id="archived-summary-count" class="text-2xl font-black text-slate-800 mt-1">0</div>
+                    </div>
+                    <div class="bg-white border border-blue-100 rounded-xl p-4">
+                        <div class="text-xs font-bold text-blue-500">本月薪資總額</div>
+                        <div id="archived-summary-gross" class="text-2xl font-black text-blue-700 mt-1">0</div>
+                    </div>
+                    <div class="bg-white border border-emerald-100 rounded-xl p-4">
+                        <div class="text-xs font-bold text-emerald-500">本月實領總額</div>
+                        <div id="archived-summary-net" class="text-2xl font-black text-emerald-700 mt-1">0</div>
+                    </div>
+                </div>
+                <div class="overflow-x-auto border border-slate-200 rounded-xl bg-white shadow-inner max-h-[360px]">
+                    <table class="w-full text-sm">
+                        <thead class="bg-slate-800 text-white sticky top-0">
+                            <tr>
+                                <th class="sys-th">姓名</th>
+                                <th class="sys-th">月份</th>
+                                <th class="sys-th">薪資總額</th>
+                                <th class="sys-th">實領金額</th>
+                                <th class="sys-th">工作時數</th>
+                                <th class="sys-th">轉場時數</th>
+                                <th class="sys-th">加班工時</th>
+                                <th class="sys-th">加班轉場</th>
+                                <th class="sys-th">更新時間</th>
+                                <th class="sys-th">快照</th>
+                            </tr>
+                        </thead>
+                        <tbody id="archived-history-body" class="divide-y divide-slate-100"></tbody>
+                    </table>
+                </div>
+                <div id="archived-snapshot-panel" class="hidden mt-5 bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+                    <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 mb-4">
+                        <div>
+                            <h4 class="text-lg font-black text-slate-800">居服員薪資快照明細</h4>
+                            <p id="archived-snapshot-subtitle" class="text-sm text-slate-500 mt-1">點選上方任一筆已歸檔資料後，這裡會顯示當次結算快照。</p>
+                        </div>
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 min-w-[280px]">
+                            <div class="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                                <div class="text-xs font-bold text-slate-500">歸檔類型</div>
+                                <div id="snapshot-type" class="text-base font-black text-slate-800 mt-1">-</div>
+                            </div>
+                            <div class="bg-blue-50 border border-blue-100 rounded-xl p-3">
+                                <div class="text-xs font-bold text-blue-500">快照版本</div>
+                                <div id="snapshot-version" class="text-base font-black text-blue-700 mt-1">-</div>
+                            </div>
+                            <div class="bg-emerald-50 border border-emerald-100 rounded-xl p-3">
+                                <div class="text-xs font-bold text-emerald-500">歸檔時間</div>
+                                <div id="snapshot-updated" class="text-sm font-black text-emerald-700 mt-1">-</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="archived-snapshot-empty" class="hidden rounded-xl border border-amber-200 bg-amber-50 text-amber-800 text-sm font-bold px-4 py-3">
+                        這筆舊資料尚未建立完整快照，之後新歸檔的居服員薪資才會顯示詳細內容。
+                    </div>
+                    <div id="archived-snapshot-content" class="hidden space-y-4">
+                        <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                            <div class="border border-slate-200 rounded-xl p-4 bg-slate-50">
+                                <h5 class="text-sm font-black text-slate-700 mb-3">員工資訊</h5>
+                                <div id="snapshot-employee" class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm"></div>
+                            </div>
+                            <div class="border border-slate-200 rounded-xl p-4 bg-slate-50">
+                                <h5 class="text-sm font-black text-slate-700 mb-3">本次摘要</h5>
+                                <div id="snapshot-summary" class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm"></div>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                            <div class="border border-slate-200 rounded-xl p-4 bg-white">
+                                <h5 class="text-sm font-black text-slate-700 mb-3">請假分類</h5>
+                                <div id="snapshot-leave" class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm"></div>
+                            </div>
+                            <div class="border border-slate-200 rounded-xl p-4 bg-white">
+                                <h5 class="text-sm font-black text-slate-700 mb-3">手動輸入參數</h5>
+                                <div id="snapshot-manual" class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm"></div>
+                            </div>
+                        </div>
+                        <div class="border border-slate-200 rounded-xl p-4 bg-white">
+                            <h5 class="text-sm font-black text-slate-700 mb-3">來源檔案</h5>
+                            <div id="snapshot-files" class="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm"></div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -146,6 +247,7 @@
                             <th class="sys-th auto-cell w-20 text-xs">AA11<br>(自動)</th>
                             <th class="sys-th auto-cell w-20 text-xs">AA05<br>(自動)</th>
                             <th class="sys-th auto-cell w-20 text-xs">AA06<br>(自動)</th>
+                            <th class="sys-th auto-cell w-20 text-xs">BA07<br>(自動)</th>
                             <th class="sys-th auto-cell w-20 text-xs">偏鄉<br>(自動)</th>
                             <th class="sys-th auto-cell w-20 text-xs">交通<br>(自動)</th>
                             <th class="sys-th extra-header text-orange-50 w-20 text-xs">補工時<br>(H)</th>
@@ -170,7 +272,7 @@
                             <td colspan="2" class="sys-td text-right font-bold text-blue-600 pr-4">⚡ 批次填寫：</td>
                             <td class="sys-td"><input type="number" class="batch-input batch-rate" oninput="window.applyBatch('base_rate', this.value)"></td>
                             <td class="sys-td"><input type="number" class="batch-input batch-rate" oninput="window.applyBatch('transit_rate', this.value)"></td>
-                            <td colspan="5" class="sys-td text-center text-gray-300">--</td>
+                            <td colspan="6" class="sys-td text-center text-gray-300">--</td>
                             <td class="sys-td"><input type="number" class="batch-input" oninput="window.applyBatch('add_work', this.value)"></td>
                             <td class="sys-td"><input type="number" class="batch-input" oninput="window.applyBatch('add_trans', this.value)"></td>
                             <td class="sys-td"><input type="number" class="batch-input" oninput="window.applyBatch('pension_rate', this.value)"></td>
@@ -245,7 +347,7 @@
                         
                         <div class="mb-6">
                             <label class="block font-bold mb-2 text-sm text-slate-600">全體公告事項：</label>
-                            <textarea id="custom-note" class="w-full border border-slate-300 p-3 rounded-lg text-sm h-24 resize-none focus:ring-2 focus:ring-blue-200 outline-none" placeholder="在此輸入補充說明 (全體公告)..." oninput="window.renderPreview()"></textarea>
+                            <textarea id="custom-note" class="w-full border border-slate-300 p-3 rounded-lg text-sm h-24 resize-none focus:ring-2 focus:ring-blue-200 outline-none" placeholder="在此輸入補充說明 (全體公告)..." oninput="window.renderPreview(); window.persistCaregiverSessionCache();"></textarea>
                         </div>
 
                         <div class="bg-slate-50 p-4 rounded-lg border border-slate-200 mb-4">
@@ -359,6 +461,7 @@
                                             <tr><td class="td-row"><div class="td-content"><span class="label t-blue font-bold">AA11</span><span class="val" data-k="AA11"></span></div></td></tr>
                                             <tr><td class="td-row"><div class="td-content"><span class="label t-blue font-bold">AA05</span><span class="val" data-k="AA05"></span></div></td></tr>
                                             <tr><td class="td-row"><div class="td-content"><span class="label t-blue font-bold">AA06</span><span class="val" data-k="AA06"></span></div></td></tr>
+                                            <tr><td class="td-row"><div class="td-content"><span class="label t-blue font-bold">BA07</span><span class="val" data-k="BA07"></span></div></td></tr>
 
                                             <tr><td class="td-row"><div class="td-content"><span class="label t-blue font-bold">偏鄉加給</span><span class="val" data-k="偏鄉加給"></span></div></td></tr>
                                             <tr><td class="td-row"><div class="td-content"><span class="label t-blue font-bold">交通加給</span><span class="val" data-k="交通加給"></span></div></td></tr>
@@ -410,14 +513,106 @@
                     statusDot.classList.replace("bg-yellow-400", "bg-red-500");
                 }
             });
+            if (!hasRestoredSessionCache) {
+                hasRestoredSessionCache = true;
+                const restored = restoreCaregiverSessionCache();
+                if (restored) {
+                    statusText.innerText = "已還原本次工作階段資料，正在重建薪資畫面...";
+                    statusDot.className = "w-3 h-3 rounded-full bg-sky-500 animate-pulse";
+                    processAll().catch(error => {
+                        console.error(error);
+                        statusText.innerText = "工作階段資料還原失敗";
+                        statusDot.className = "w-3 h-3 rounded-full bg-red-500";
+                    });
+                }
+            }
         }
     }, 100);
 
-    let rawH=[], rawS=[], rawA=[], rawB=[], merged=[], results=[], empMap=new Map(), aaMap=new Map(), aa05Map=new Map(), aa06Map=new Map(), subsidyMap=new Map();
+    // ★ 新增 ba07Map
+    let rawH=[], rawS=[], rawA=[], rawB=[], merged=[], results=[], empMap=new Map(), aaMap=new Map(), aa05Map=new Map(), aa06Map=new Map(), ba07Map=new Map(), subsidyMap=new Map();
     let dbEmployees = new Map(); 
     let currentDateLabel = "薪資單";
     const { jsPDF } = window.jspdf;
     let savedManualData = {};
+    let importedFileNames = { main: '', a: '', b: '' };
+    let archivedCaregiverRecordMap = new Map();
+    let hasRestoredSessionCache = false;
+    const CAREGIVER_SESSION_CACHE_KEY = 'guangyou_caregiver_salary_session_v1';
+    const CAREGIVER_PAYROLL_RULES = {
+        leaveTypes: {
+            fullPay: ['特休', '補休', '婚假', '喪假', '公假', '公傷假', '產假', '產檢假', '陪產假', '歲時祭儀'],
+            halfPay: ['病假', '生理假']
+        },
+        overtimeBase: {
+            includedItems: ['本薪', 'AA05', 'AA06', 'BA07', '丙證加給', '服務獎金']
+        },
+        subsidy: {
+            splitMode: 'half-half',
+            labels: ['偏鄉加給', '交通加給']
+        }
+    };
+
+    function markUploadedDropZones() {
+        if (rawH.length && rawS.length) document.getElementById('drop-main')?.classList.add('uploaded');
+        if (rawA.length) document.getElementById('drop-a')?.classList.add('uploaded');
+        if (rawB.length) document.getElementById('drop-b')?.classList.add('uploaded');
+    }
+
+    function buildCaregiverSessionCachePayload() {
+        return {
+            rawH,
+            rawS,
+            rawA,
+            rawB,
+            savedManualData,
+            importedFileNames,
+            currentDateLabel,
+            archiveMonth: document.getElementById('archive-month')?.value || '',
+            customNote: document.getElementById('custom-note')?.value || '',
+            cachedAt: new Date().toISOString()
+        };
+    }
+
+    function persistCaregiverSessionCache() {
+        try {
+            const payload = buildCaregiverSessionCachePayload();
+            sessionStorage.setItem(CAREGIVER_SESSION_CACHE_KEY, JSON.stringify(payload));
+        } catch (error) {
+            console.warn('居服員薪資工作階段快取失敗', error);
+        }
+    }
+
+    function resetCaregiverSalarySession() {
+        sessionStorage.removeItem(CAREGIVER_SESSION_CACHE_KEY);
+        location.reload();
+    }
+
+    function restoreCaregiverSessionCache() {
+        try {
+            const cached = sessionStorage.getItem(CAREGIVER_SESSION_CACHE_KEY);
+            if (!cached) return false;
+            const data = JSON.parse(cached);
+            rawH = Array.isArray(data.rawH) ? data.rawH : [];
+            rawS = Array.isArray(data.rawS) ? data.rawS : [];
+            rawA = Array.isArray(data.rawA) ? data.rawA : [];
+            rawB = Array.isArray(data.rawB) ? data.rawB : [];
+            savedManualData = data.savedManualData && typeof data.savedManualData === 'object' ? data.savedManualData : {};
+            importedFileNames = data.importedFileNames && typeof data.importedFileNames === 'object' ? data.importedFileNames : { main: '', a: '', b: '' };
+            currentDateLabel = data.currentDateLabel || currentDateLabel;
+            const archiveMonthInput = document.getElementById('archive-month');
+            if (archiveMonthInput && data.archiveMonth) archiveMonthInput.value = data.archiveMonth;
+            const noteInput = document.getElementById('custom-note');
+            if (noteInput && typeof data.customNote === 'string') noteInput.value = data.customNote;
+            const dynamicDate = document.getElementById('dynamic-date');
+            if (dynamicDate && currentDateLabel) dynamicDate.innerText = currentDateLabel;
+            markUploadedDropZones();
+            return rawH.length > 0 && rawS.length > 0 && rawA.length > 0 && rawB.length > 0;
+        } catch (error) {
+            console.warn('居服員薪資工作階段快取還原失敗', error);
+            return false;
+        }
+    }
 
     window.loadFile = loadFile;
     window.saveInput = saveInput;
@@ -434,8 +629,386 @@
     window.archiveData = archiveData;
     window.deleteArchivedData = deleteArchivedData;
     window.autoFillLeaves = autoFillLeaves;
+    window.loadArchivedCaregiverPayroll = loadArchivedCaregiverPayroll;
+    window.showArchivedCaregiverSnapshot = showArchivedCaregiverSnapshot;
+    window.persistCaregiverSessionCache = persistCaregiverSessionCache;
+    window.resetCaregiverSalarySession = resetCaregiverSalarySession;
 
-    // ★ 智慧欄位索引 (初始值，會被 autoMapColumns 覆蓋)
+    function applyReadableLabels() {
+        document.title = "居服員薪資系統 (v17.0 BA07 擴充版)";
+
+        const mainTitle = document.querySelector('h1.text-3xl');
+        if (mainTitle) {
+            mainTitle.innerHTML = '💰 居服員薪資系統 <span class="text-sm bg-blue-100 text-blue-700 px-2 py-1 rounded ml-2 align-middle font-normal">v17.0 BA07 擴充版</span>';
+        }
+
+        const reloadBtn = document.querySelector('button[onclick="location.reload()"]');
+        if (reloadBtn) reloadBtn.textContent = '重新整理系統';
+
+        const dropMainTitle = document.querySelector('#drop-main h3');
+        const dropMainMsg = document.getElementById('msg-main');
+        if (dropMainTitle) dropMainTitle.textContent = '1. 薪資報表（主檔）';
+        if (dropMainMsg) dropMainMsg.textContent = '明細總計 / 薪資表';
+
+        const dropATitle = document.querySelector('#drop-a h3');
+        const dropAMsg = document.getElementById('msg-a');
+        if (dropATitle) dropATitle.textContent = '2. 員工拆帳明細';
+        if (dropAMsg) dropAMsg.textContent = '計算 AA11、AA05、AA06、BA07';
+
+        const dropBTitle = document.querySelector('#drop-b h3');
+        const dropBMsg = document.getElementById('msg-b');
+        if (dropBTitle) dropBTitle.textContent = '3. 偏鄉津貼清冊';
+        if (dropBMsg) dropBMsg.textContent = '計算偏鄉加給／交通加給';
+
+        const historyCard = document.querySelector('#archived-month')?.closest('.mb-10');
+        if (historyCard) {
+            const title = historyCard.querySelector('h3');
+            const desc = historyCard.querySelector('p');
+            if (title) title.textContent = '居服員歷史結算查詢';
+            if (desc) desc.textContent = '直接查詢已歸檔到系統的居服員薪資摘要，不需要重新匯入 Excel。';
+        }
+
+        const historyBtn = document.querySelector('button[onclick="window.loadArchivedCaregiverPayroll()"]');
+        if (historyBtn) historyBtn.textContent = '查詢已歸檔薪資';
+
+        const archivedSummaryLabels = [
+            ['#archived-summary-count', '已歸檔人數'],
+            ['#archived-summary-gross', '本月薪資總額'],
+            ['#archived-summary-net', '本月實領總額']
+        ];
+        archivedSummaryLabels.forEach(([id, label]) => {
+            const valueEl = document.querySelector(id);
+            const box = valueEl?.parentElement;
+            const textEl = box?.querySelector('div.text-xs');
+            if (textEl) textEl.textContent = label;
+        });
+
+        const archivedHeaders = ['姓名', '月份', '薪資總額', '實領金額', '工作時數', '轉場時數', '加班工時', '加班轉場', '更新時間', '快照'];
+        document.querySelectorAll('#archived-history-section thead th').forEach((th, idx) => {
+            if (archivedHeaders[idx]) th.textContent = archivedHeaders[idx];
+        });
+
+        const autoFillBanner = document.querySelector('#step-2 .bg-yellow-50');
+        if (autoFillBanner) {
+            const h4 = autoFillBanner.querySelector('h4');
+            const spans = autoFillBanner.querySelectorAll('span');
+            if (h4) h4.textContent = '系統自動帶入';
+            if (spans[0]) spans[0].textContent = '已自動讀取請假資料（全薪／半薪／無薪）';
+            if (spans[1]) spans[1].textContent = '（依據 Firebase 資料庫自動帶入）';
+        }
+
+        const step2Header = document.querySelector('#step-2 .flex.justify-between.items-end h3');
+        if (step2Header) step2Header.textContent = '步驟 2：確認薪資參數與補充資料';
+
+        const exportBtn = document.querySelector('button[onclick="window.exportParams()"]');
+        const importBtn = document.querySelector('button[onclick="document.getElementById(\'paramFile\').click()"]');
+        if (exportBtn) exportBtn.textContent = '匯出參數設定';
+        if (importBtn) importBtn.textContent = '載入參數設定';
+
+        const step3Title = document.querySelector('#step-3 > div > div.flex.justify-between.items-center h3');
+        if (step3Title) step3Title.textContent = '步驟 3：薪資計算結果';
+
+        const totalSalaryLabel = document.querySelector('#total-salary-sum')?.previousElementSibling;
+        const totalNetLabel = document.querySelector('#total-net-sum')?.previousElementSibling;
+        if (totalSalaryLabel) totalSalaryLabel.textContent = '本月薪資總額';
+        if (totalNetLabel) totalNetLabel.textContent = '本月實領總額';
+    }
+
+    applyReadableLabels();
+
+    function applyReadableLabelsV2() {
+        document.title = "居服員薪資系統 (v17.0 BA07 擴充版)";
+
+        const mainTitle = document.querySelector('h1.text-3xl');
+        if (mainTitle) {
+            mainTitle.innerHTML = '💰 居服員薪資系統 <span class="text-sm bg-blue-100 text-blue-700 px-2 py-1 rounded ml-2 align-middle font-normal">v17.0 BA07 擴充版</span>';
+        }
+
+        const reloadBtn = document.querySelector('button[onclick="location.reload()"]');
+        if (reloadBtn) reloadBtn.textContent = '重新整理系統';
+
+        const dropCards = [
+            ['#drop-main', '📘', '1. 薪資報表（主檔）', '明細總計 / 薪資表'],
+            ['#drop-a', '📄', '2. 員工拆帳明細', '計算 AA11、AA05、AA06、BA07'],
+            ['#drop-b', '🧾', '3. 偏鄉津貼清冊', '計算偏鄉加給／交通加給']
+        ];
+        dropCards.forEach(([selector, icon, title, desc]) => {
+            const card = document.querySelector(selector);
+            if (!card) return;
+            const iconEl = card.querySelector('div.text-3xl');
+            const titleEl = card.querySelector('h3');
+            const descEl = card.querySelector('p');
+            if (iconEl) iconEl.textContent = icon;
+            if (titleEl) titleEl.textContent = title;
+            if (descEl) descEl.textContent = desc;
+        });
+
+        const historyCard = document.querySelector('#archived-month')?.closest('.mb-10');
+        if (historyCard) {
+            const title = historyCard.querySelector('h3');
+            const desc = historyCard.querySelector('p');
+            if (title) title.textContent = '居服員歷史結算查詢';
+            if (desc) desc.textContent = '直接查詢已歸檔到系統的居服員薪資摘要，不需要重新匯入 Excel。';
+        }
+        const historyBtn = document.querySelector('button[onclick="window.loadArchivedCaregiverPayroll()"]');
+        if (historyBtn) historyBtn.textContent = '查詢已歸檔薪資';
+
+        [
+            ['#archived-summary-count', '已歸檔人數'],
+            ['#archived-summary-gross', '本月薪資總額'],
+            ['#archived-summary-net', '本月實領總額']
+        ].forEach(([id, label]) => {
+            const valueEl = document.querySelector(id);
+            const textEl = valueEl?.parentElement?.querySelector('div.text-xs');
+            if (textEl) textEl.textContent = label;
+        });
+
+        const archivedHeaders = ['姓名', '月份', '薪資總額', '實領金額', '工作時數', '轉場時數', '加班工時', '加班轉場', '更新時間', '快照'];
+        document.querySelectorAll('#archived-history-section thead th').forEach((th, idx) => {
+            if (archivedHeaders[idx]) th.textContent = archivedHeaders[idx];
+        });
+
+        const autoFillBanner = document.querySelector('#step-2 .bg-yellow-50');
+        if (autoFillBanner) {
+            const h4 = autoFillBanner.querySelector('h4');
+            const spans = autoFillBanner.querySelectorAll('span');
+            if (h4) h4.textContent = '系統自動帶入';
+            if (spans[0]) spans[0].textContent = '已自動讀取請假資料（全薪／半薪／無薪）';
+            if (spans[1]) spans[1].textContent = '（依據 Firebase 資料庫自動帶入）';
+        }
+
+        const step2Header = document.querySelector('#step-2 .flex.justify-between.items-end h3');
+        if (step2Header) step2Header.textContent = '步驟 2：確認薪資參數與補充資料';
+        const exportBtn = document.querySelector('button[onclick="window.exportParams()"]');
+        const importBtn = document.querySelector('button[onclick="document.getElementById(\'paramFile\').click()"]');
+        if (exportBtn) exportBtn.textContent = '匯出參數設定';
+        if (importBtn) importBtn.textContent = '載入參數設定';
+
+        const step3Title = document.querySelector('#step-3 > div > div.flex.justify-between.items-center h3');
+        if (step3Title) step3Title.textContent = '步驟 3：薪資計算結果';
+        const totalSalaryLabel = document.querySelector('#total-salary-sum')?.previousElementSibling;
+        const totalNetLabel = document.querySelector('#total-net-sum')?.previousElementSibling;
+        if (totalSalaryLabel) totalSalaryLabel.textContent = '本月薪資總額';
+        if (totalNetLabel) totalNetLabel.textContent = '本月實領總額';
+        const archiveMonthLabel = document.querySelector('#archive-month')?.parentElement?.querySelector('label');
+        if (archiveMonthLabel) archiveMonthLabel.textContent = '歸檔月份:';
+        const deleteBtn = document.querySelector('button[onclick="window.deleteArchivedData()"]');
+        const archiveBtn = document.querySelector('button[onclick="window.archiveData()"]');
+        const csvBtn = document.querySelector('button[onclick="window.exportCSV()"]');
+        if (deleteBtn) { deleteBtn.textContent = '刪除該月'; deleteBtn.title = '刪除該月所有資料'; }
+        if (archiveBtn) archiveBtn.textContent = '寫入歸檔（本月）';
+        if (csvBtn) csvBtn.textContent = '匯出 CSV';
+
+        const employeeLabel = document.querySelector('#sel-emp')?.previousElementSibling;
+        if (employeeLabel) employeeLabel.textContent = '選擇員工：';
+        const firstOption = document.querySelector('#sel-emp option:first-child');
+        if (firstOption) firstOption.textContent = '請選擇員工...';
+        const jpgBtn = document.querySelector('button[onclick="window.downloadCurrentJPG()"]');
+        const pdfBtn = document.querySelector('button[onclick="window.downloadCurrentPDF()"]');
+        if (jpgBtn) jpgBtn.textContent = '下載目前圖片';
+        if (pdfBtn) pdfBtn.textContent = '下載 PDF';
+        const batchTitle = document.querySelector('#btn-batch')?.closest('.bg-red-50')?.querySelector('h4');
+        if (batchTitle) batchTitle.innerHTML = '<span>📦</span> 批次匯出';
+        const batchBtn = document.getElementById('btn-batch');
+        const batchJpgBtn = document.getElementById('btn-batch-jpg');
+        if (batchBtn) batchBtn.textContent = '匯出全員 PDF（ZIP）';
+        if (batchJpgBtn) batchJpgBtn.textContent = '匯出全員圖片（ZIP）';
+
+        const rpTitle = document.querySelector('.rp-title');
+        const rpSubTitle = document.getElementById('dynamic-date');
+        if (rpTitle) rpTitle.textContent = '光祐有限公司附設花蓮縣私立居家式長照機構 薪資單';
+        if (rpSubTitle && (!rpSubTitle.textContent || rpSubTitle.textContent.includes('?'))) rpSubTitle.textContent = '薪資單';
+        const infoTexts = ['姓名：', '投保級距：', '約定時薪：', '轉場費率：', '加班基數：', '雇主提繳(6%)：'];
+        document.querySelectorAll('.info-label').forEach((el, idx) => {
+            if (infoTexts[idx]) el.textContent = infoTexts[idx];
+        });
+        const sumBlue = document.querySelector('.sum-row.t-blue');
+        const sumRed = document.querySelector('.sum-row.t-red');
+        if (sumBlue) sumBlue.childNodes[0].textContent = '本月薪資：';
+        if (sumRed) sumRed.childNodes[0].textContent = '實領薪資：';
+
+        const labelByKey = {
+            '?祈': '本薪',
+            '撌乩??亙??剛祥': '工作日加班費',
+            '隡??亙??剛祥': '休假日加班費',
+            '???鞎?': '國定假日加班費',
+            '頧鞎蓓1.0': '平日轉場費',
+            '頧鞎蓓1.34': '轉場費(1.34)',
+            '頧鞎蓓1.67': '轉場費(1.67)',
+            '?刻?策隞?': '全薪假給付',
+            '??策隞?': '半薪假給付',
+            '???策': '偏鄉加給',
+            '鈭日?蝯?': '交通加給',
+            '銝??策': '丙證加給',
+            '??賢撥???菟?': '技能強化',
+            '?蝳桅?': '生日禮金',
+            '????': '服務獎金',
+            '?降?箏葉': '會議出席',
+            '銝剔?蝡臬?': '中秋/端午禮金',
+            '?嗡?': '其他(薪資)',
+            '??鞎?': '勞保費',
+            '?乩?鞎?': '健保費',
+            '?乩?鞎??瑕惇)': '健保費(眷屬)',
+            '??芣?': '勞退自提',
+            '?嗡???狡': '其他',
+            '隞?蝮質?': '代扣小計'
+        };
+        Object.entries(labelByKey).forEach(([key, text]) => {
+            const valueEl = document.querySelector(`[data-k="${key}"]`);
+            const labelEl = valueEl?.closest('.td-content')?.querySelector('.label');
+            if (labelEl) labelEl.textContent = text;
+        });
+
+        const leaveTitle = document.querySelector('#leave-section-header .sub-th span');
+        if (leaveTitle) leaveTitle.textContent = '請假明細';
+        const leftSubTitles = document.querySelectorAll('#tbl-body-L .sub-th span');
+        if (leftSubTitles[0]) leftSubTitles[0].textContent = '工時明細（小時）';
+        if (leftSubTitles[1]) leftSubTitles[1].textContent = '轉場明細';
+        const deductionTitle = document.querySelector('#tbl-body-L tr[style*="background-color: #e2e8f0"]');
+        if (deductionTitle) deductionTitle.textContent = '代扣明細';
+        const salaryDetailTitle = document.querySelector('.col-R tr td[colspan="2"]');
+        if (salaryDetailTitle) salaryDetailTitle.textContent = '薪資明細（元）';
+        const footerStrong = document.querySelector('.footer strong');
+        if (footerStrong) footerStrong.textContent = '備註說明 / 公開備註';
+    }
+
+    applyReadableLabelsV2();
+
+    function applyReadableLabelsV3() {
+        document.title = "居服員薪資系統 (v17.0 BA07 擴充版)";
+
+        if (statusText && (!statusText.textContent || statusText.textContent.includes('?'))) {
+            statusText.textContent = "系統連線初始化中...";
+        }
+
+        const leftLabels = [
+            '姓名：',
+            '投保級距：',
+            '約定時薪：',
+            '轉場費率：',
+            '加班基數：',
+            '雇主提繳(6%)：'
+        ];
+        document.querySelectorAll('.info-label').forEach((el, idx) => {
+            if (leftLabels[idx]) el.textContent = leftLabels[idx];
+        });
+
+        const sumRows = document.querySelectorAll('.info-right .sum-row');
+        if (sumRows[0]) sumRows[0].childNodes[0].textContent = '本月薪資：';
+        if (sumRows[1]) sumRows[1].childNodes[0].textContent = '實領薪資：';
+
+        const leftSectionTitles = document.querySelectorAll('#tbl-body-L .sub-th');
+        if (leftSectionTitles[0]) leftSectionTitles[0].innerHTML = '<span>工時明細（小時）</span><span>總計：<span class="val" data-k="工時總計"></span></span>';
+        if (leftSectionTitles[1]) leftSectionTitles[1].innerHTML = '<span>轉場明細</span><span>總計：<span class="val" data-k="轉場總計"></span></span>';
+        const leaveTitle = document.querySelector('#leave-section-header .sub-th span');
+        if (leaveTitle) leaveTitle.textContent = '請假明細';
+
+        const leftLabelsBody = [
+            '本月工時',
+            '工作日加班(9-10)',
+            '工作日加班(11-12)',
+            '休假日加班(0-2)',
+            '休假日加班(3-8)',
+            '休假日加班(9-10)',
+            '國定假日加班(0-8)',
+            '國定假日加班(9-10)',
+            '工作日轉場',
+            '轉場(9-10)',
+            '轉場(11-12)',
+            '休假日轉場(0-2)',
+            '休假日轉場(3-8)',
+            '休假日轉場(9-10)',
+            '國定假日轉場',
+            '勞保費',
+            '健保費',
+            '健保費(眷屬)',
+            '勞退自提',
+            '其他',
+            '代扣小計'
+        ];
+        const leftAllLabels = document.querySelectorAll('#tbl-body-L .label');
+        leftAllLabels.forEach((el, idx) => {
+            if (leftLabelsBody[idx]) el.textContent = leftLabelsBody[idx];
+        });
+
+        const deductionHeader = document.querySelector('#tbl-body-L tr[style*="background-color: #e2e8f0"] td[colspan="2"]');
+        if (deductionHeader) deductionHeader.textContent = '代扣明細';
+
+        const rightHeader = document.querySelector('.col-R tbody tr:first-child td[colspan="2"]');
+        if (rightHeader) rightHeader.textContent = '薪資明細（元）';
+
+        const rightLabels = [
+            '本薪',
+            '工作日加班費',
+            '休假日加班費',
+            '國定假日加班費',
+            '平日轉場費',
+            '轉場費(1.34)',
+            '轉場費(1.67)',
+            '轉場費(2.67)',
+            '轉場費(2.0)',
+            '全薪假給付',
+            '半薪假給付',
+            'AA11',
+            'AA05',
+            'AA06',
+            'BA07',
+            '偏鄉加給',
+            '交通加給',
+            '丙證加給',
+            '技能強化',
+            '生日禮金',
+            '服務獎金',
+            '會議出席',
+            '中秋/端午禮金',
+            '其他(薪資)',
+            '應發小計'
+        ];
+        const rightAllLabels = document.querySelectorAll('.col-R .label');
+        rightAllLabels.forEach((el, idx) => {
+            if (rightLabels[idx]) el.textContent = rightLabels[idx];
+        });
+
+        const footerStrong = document.querySelector('.footer strong');
+        if (footerStrong) footerStrong.textContent = '備註說明 / 公開備註';
+    }
+
+    function ensureManualInsuranceColumns() {
+        const headerRow = document.querySelector('#step-2 thead tr');
+        const leaveHeader = headerRow?.querySelector('.leave-header');
+        if (headerRow && leaveHeader && !headerRow.querySelector('[data-manual-col="labor_ins"]')) {
+            [
+                { key: 'labor_ins', label: '勞保費' },
+                { key: 'health_ins', label: '健保費' },
+                { key: 'health_ins_family', label: '健保費(眷屬)' }
+            ].forEach(def => {
+                const th = document.createElement('th');
+                th.className = 'sys-th deduct-header w-24 text-red-50';
+                th.dataset.manualCol = def.key;
+                th.innerHTML = `${def.label}<br>(本月可改)`;
+                headerRow.insertBefore(th, leaveHeader);
+            });
+        }
+
+        const leaveBatchInput = Array.from(document.querySelectorAll('.batch-row input')).find(el => {
+            const handler = el.getAttribute('oninput') || '';
+            return handler.includes("applyBatch('leave_full'");
+        });
+        const leaveBatchCell = leaveBatchInput?.closest('td');
+        if (leaveBatchCell && !document.querySelector('.batch-row [data-manual-col=\"labor_ins\"]')) {
+            ['labor_ins', 'health_ins', 'health_ins_family'].forEach(key => {
+                const td = document.createElement('td');
+                td.className = 'sys-td';
+                td.dataset.manualCol = key;
+                td.innerHTML = `<input type="number" class="batch-input batch-deduct" oninput="window.applyBatch('${key}', this.value)">`;
+                leaveBatchCell.parentNode.insertBefore(td, leaveBatchCell);
+            });
+        }
+    }
+
+    applyReadableLabelsV3();
+    ensureManualInsuranceColumns();
+
     let IDX = { 
         h: { work_day:[16], work_ot_9_10:[25,91], work_ot_11_12:[27,93], hol_ot_0_2:[45,111], hol_ot_3_8:[47,113], hol_ot_9_10:[49,115], nat_ot_0_8:[29,31,95,97], nat_ot_9_10:[33,99], trans_work:[15], trans_work_9_10:[26,92], trans_work_11_12:[28,94], trans_hol_0_2:[46,112], trans_hol_3_8:[48,114], trans_hol_9_10:[50,116], trans_nat:[30,32,96,98] }, 
         s: { license:60, remote:61, trans:62, add_120:63, add_140:64, skill:65, level:67, labor:80, health:81, health_dep:82, pension:83 } 
@@ -443,6 +1016,7 @@
 
     function loadFile(input, type) {
         if(!input.files[0]) return;
+        importedFileNames[type] = input.files[0].name || '';
         const r = new FileReader();
         r.onload = e => {
             const wb = XLSX.read(new Uint8Array(e.target.result), {type:'array'});
@@ -457,7 +1031,6 @@
                 rawH = XLSX.utils.sheet_to_json(wb.Sheets[sheetHName], {header:1});
                 rawS = XLSX.utils.sheet_to_json(wb.Sheets[sheetSName], {header:1});
                 
-                // ★ 執行智慧欄位對應
                 autoMapColumns(rawH[0] || []);
 
                 if(rawS.length > 1 && rawS[1][0]) {
@@ -478,12 +1051,12 @@
                 rawB = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {header:1});
                 document.getElementById('drop-b').classList.add('uploaded');
             }
+            persistCaregiverSessionCache();
             if(rawH.length && rawS.length && rawA.length && rawB.length) processAll();
         };
         r.readAsArrayBuffer(input.files[0]);
     }
 
-    // ★ 新增：智慧欄位偵測函式
     function autoMapColumns(headers) {
         const map = {
             trans_work: [], trans_work_9_10: [], trans_work_11_12: [],
@@ -504,7 +1077,6 @@
             else if (str.includes('國定')) map.trans_nat.push(i);
         });
 
-        // 只有當找到對應欄位時才覆蓋預設值
         if(map.trans_work.length > 0) IDX.h.trans_work = map.trans_work;
         if(map.trans_work_9_10.length > 0) IDX.h.trans_work_9_10 = map.trans_work_9_10;
         if(map.trans_work_11_12.length > 0) IDX.h.trans_work_11_12 = map.trans_work_11_12;
@@ -532,6 +1104,7 @@
         r.onload = e => {
             try {
                 savedManualData = JSON.parse(e.target.result);
+                persistCaregiverSessionCache();
                 if (merged.length > 0) {
                     renderManualTable();
                     alert("參數讀取成功！表格已更新。");
@@ -554,11 +1127,11 @@
             dbEmployees.set(doc.data().name, { id: doc.id, ...doc.data() });
         });
 
-        aaMap.clear(); aa05Map.clear(); aa06Map.clear(); subsidyMap.clear();
+        // ★ 新增清空 ba07Map
+        aaMap.clear(); aa05Map.clear(); aa06Map.clear(); ba07Map.clear(); subsidyMap.clear();
 
-        // 省略 rawA, rawB 處理 (保持原樣)
         const headerA = rawA[0] || [];
-        const idx_a_code = 12; // 簡化，若需 findCol 可補回
+        const idx_a_code = 12; 
         const idx_a_qty = 14;
         for(let i=2; i<rawA.length; i++) {
             const r = rawA[i];
@@ -570,14 +1143,17 @@
                 if (code === 'AA11') aaMap.set(name, (aaMap.get(name) || 0) + qty);
                 else if (code === 'AA05') aa05Map.set(name, (aa05Map.get(name) || 0) + qty);
                 else if (code === 'AA06') aa06Map.set(name, (aa06Map.get(name) || 0) + qty);
+                // ★ 新增判斷 BA07
+                else if (code === 'BA07') ba07Map.set(name, (ba07Map.get(name) || 0) + qty);
             }
         }
+        
         const idx_b_amt = 12;
         for(let i=2; i<rawB.length; i++) { 
             const r = rawB[i];
             const name = r[2]?.toString().trim() || "";
             const amt = parseFloat(r[idx_b_amt]) || 0;
-            if(name && amt > 0) subsidyMap.set(name, amt / 2);
+            if(name && amt > 0) subsidyMap.set(name, (subsidyMap.get(name) || 0) + amt);
         }
 
         const hMap = new Map();
@@ -597,13 +1173,16 @@
                     aaAmt: (aaMap.get(name)||0) * 50,
                     aa05Amt: (aa05Map.get(name)||0) * 50,
                     aa06Amt: (aa06Map.get(name)||0) * 50,
-                    subAmt: subsidyMap.get(name) || 0 
+                    // ★ 儲存 BA07 計算結果 (一樣乘 50)
+                    ba07Amt: (ba07Map.get(name)||0) * 50,
+                    subAmt: (subsidyMap.get(name) || 0) / 2 
                 });
             }
         }
 
         await syncFirestoreData();
-        await autoFillLeaves(); 
+        await autoFillLeaves();
+        persistCaregiverSessionCache();
     }
 
     async function syncFirestoreData() {
@@ -657,8 +1236,9 @@
                         const hours = Number(r.hours) || 0;
                         const type = r.type || "";
                         details.push({ type: type, hours: hours });
-                        if (['特休','喪假','公假','婚假','產假','陪產假','歲時祭儀'].some(k => type.includes(k))) full += hours;
-                        else if (['病假','生理假'].some(k => type.includes(k))) half += hours;
+                        const leaveClass = classifyCaregiverLeaveType(type);
+                        if (leaveClass === 'fullPay') full += hours;
+                        else if (leaveClass === 'halfPay') half += hours;
                         else no += hours;
                     }
                 });
@@ -672,7 +1252,107 @@
             }
             renderManualTable(); 
             statusText.innerText = `系統就緒 (請假資料同步完成)`;
+            persistCaregiverSessionCache();
         } catch (e) { console.error(e); }
+    }
+
+    function renderSnapshotFieldList(containerId, items) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        container.innerHTML = items.map(([label, value]) => `
+            <div class="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                <div class="text-[11px] font-bold text-slate-500">${label}</div>
+                <div class="text-sm font-bold text-slate-800 mt-1 break-all">${value}</div>
+            </div>
+        `).join('');
+    }
+
+    function showArchivedCaregiverSnapshot(docId) {
+        const record = archivedCaregiverRecordMap.get(docId);
+        if (!record) return;
+
+        const panel = document.getElementById('archived-snapshot-panel');
+        const empty = document.getElementById('archived-snapshot-empty');
+        const content = document.getElementById('archived-snapshot-content');
+        const subtitle = document.getElementById('archived-snapshot-subtitle');
+        const typeEl = document.getElementById('snapshot-type');
+        const versionEl = document.getElementById('snapshot-version');
+        const updatedEl = document.getElementById('snapshot-updated');
+
+        panel?.classList.remove('hidden');
+        typeEl.textContent = record.salaryType === 'caregiver' ? '居服員薪資' : (record.salaryType || '舊版資料');
+        versionEl.textContent = record.meta?.appVersion || '舊版資料';
+        updatedEl.textContent = record.meta?.updatedAt ? dayjs(record.meta.updatedAt).format('YYYY-MM-DD HH:mm') : (record.updatedAt ? dayjs(record.updatedAt).format('YYYY-MM-DD HH:mm') : '-');
+        subtitle.textContent = `${record.employeeName || record.name || '未命名員工'}｜${record.yearMonth || '-'}｜已歸檔快照內容`;
+
+        const payslipData = record.payslipData || null;
+        const summary = record.summary || buildCaregiverSummaryFromResultRow(record);
+        const snapshot = record.snapshot || null;
+
+        if (!snapshot && !payslipData) {
+            empty?.classList.remove('hidden');
+            content?.classList.add('hidden');
+            return;
+        }
+
+        empty?.classList.add('hidden');
+        content?.classList.remove('hidden');
+
+        const employee = snapshot?.employee || {};
+        const leave = snapshot?.leave || {
+            fullPayHours: payslipData?.rightPanel?.leavePay?.fullPayHours || 0,
+            halfPayHours: payslipData?.rightPanel?.leavePay?.halfPayHours || 0,
+            noPayHours: payslipData?.rightPanel?.leavePay?.noPayHours || 0,
+            details: payslipData?.leftPanel?.leaveDetails || []
+        };
+        const manual = snapshot?.manualInputs || {};
+        const files = record.meta?.sourceFiles || {};
+
+        renderSnapshotFieldList('snapshot-employee', [
+            ['員工編號', employee.code || payslipData?.employeeCode || '-'],
+            ['姓名', employee.name || payslipData?.employeeName || record.employeeName || '-'],
+            ['約定時薪', fmtMoney(employee.baseRate || payslipData?.info?.baseRate || 0)],
+            ['轉場費率', fmtMoney(employee.transitRate || payslipData?.info?.transitRate || 0)],
+            ['加班基數', fmtMoney(employee.otBase || payslipData?.info?.otBase || 0)],
+            ['丙證加給', fmtMoney(employee.licenseBonus || payslipData?.rightPanel?.bonuses?.licenseBonus || 0)],
+            ['服務獎金', fmtMoney(employee.serviceBonus || payslipData?.rightPanel?.bonuses?.serviceBonus || 0)],
+            ['自提比例', `${employee.pensionRate || snapshot?.employee?.pensionRate || 0}%`]
+        ]);
+
+        renderSnapshotFieldList('snapshot-summary', [
+            ['薪資總額', fmtMoney(summary.grossSalary || 0)],
+            ['實領金額', fmtMoney(summary.netSalary || 0)],
+            ['本月工時', fmtHours(summary.workHours || 0)],
+            ['轉場工時', fmtHours(summary.transitHours || 0)],
+            ['加班工時', fmtHours(summary.otWorkHours || 0)],
+            ['加班轉場', fmtHours(summary.otTransitHours || 0)],
+            ['全基礎工時', fmtHours(summary.totalBaseHours || 0)],
+            ['快照版本', record.meta?.appVersion || '-']
+        ]);
+
+        renderSnapshotFieldList('snapshot-leave', [
+            ['全薪假時數', `${fmtHours(leave.fullPayHours || 0)} 小時`],
+            ['半薪假時數', `${fmtHours(leave.halfPayHours || 0)} 小時`],
+            ['無薪假時數', `${fmtHours(leave.noPayHours || 0)} 小時`],
+            ['請假明細筆數', `${Array.isArray(leave.details) ? leave.details.length : 0} 筆`]
+        ]);
+
+        renderSnapshotFieldList('snapshot-manual', [
+            ['技能強化', fmtMoney(manual.skill || payslipData?.rightPanel?.bonuses?.skillBonus || 0)],
+            ['生日禮金', fmtMoney(manual.birthday || payslipData?.rightPanel?.bonuses?.birthdayBonus || 0)],
+            ['服務獎金', fmtMoney(manual.service || payslipData?.rightPanel?.bonuses?.serviceBonus || 0)],
+            ['會議出席', fmtMoney(manual.meeting || payslipData?.rightPanel?.bonuses?.meetingBonus || 0)],
+            ['中秋/端午', fmtMoney(manual.festival || payslipData?.rightPanel?.bonuses?.festivalBonus || 0)],
+            ['其他(薪資)', fmtMoney(manual.other || payslipData?.rightPanel?.bonuses?.otherPlus || 0)],
+            ['其他扣款', fmtMoney(manual.other_deduct || payslipData?.leftPanel?.deductions?.otherDeduct || 0)],
+            ['個人備註', manual.note || payslipData?.footerNote || '-']
+        ]);
+
+        renderSnapshotFieldList('snapshot-files', [
+            ['薪資報表主檔', files.mainWorkbook || '未記錄'],
+            ['員工拆帳明細', files.splitWorkbook || '未記錄'],
+            ['偏鄉津貼清冊', files.subsidyWorkbook || '未記錄']
+        ]);
     }
 
     function renderManualTable() {
@@ -682,10 +1362,16 @@
             const getVal = (k) => saved[k] !== undefined ? saved[k] : 0;
             const getBaseRate = () => saved['base_rate'] !== undefined ? saved['base_rate'] : 0; 
             const getTransitRate = () => saved['transit_rate'] !== undefined ? saved['transit_rate'] : 0; 
+            const getImportedVal = (indexes) => val(e.sRow, indexes);
+            const getInsuranceVal = (savedKey, importedIndexes) => saved[savedKey] !== undefined ? saved[savedKey] : getImportedVal(importedIndexes);
             const getNote = () => saved['note'] || '';
             const dbData = dbEmployees.get(e.name) || {};
             const dbPension = dbData.pensionRate || 0;
             const dbLicense = dbData.hasLicense ? '✅' : '-';
+
+            const importedLabor = getImportedVal(IDX.s.labor);
+            const importedHealth = getImportedVal(IDX.s.health);
+            const importedHealthDep = getImportedVal(IDX.s.health_dep);
 
             return `
             <tr class="hover:bg-slate-50">
@@ -702,13 +1388,26 @@
                 <td class="sys-td text-center text-green-600 bg-green-50 font-bold auto-cell">${e.aaAmt}</td>
                 <td class="sys-td text-center text-green-600 bg-green-50 font-bold auto-cell">${e.aa05Amt}</td>
                 <td class="sys-td text-center text-green-600 bg-green-50 font-bold auto-cell">${e.aa06Amt}</td>
-                <td class="sys-td text-center text-purple-600 bg-purple-50 font-bold auto-cell">${e.subAmt*2}</td>
-                <td class="sys-td text-center text-purple-600 bg-purple-50 font-bold auto-cell">${e.subAmt*2}</td>
+                <td class="sys-td text-center text-green-600 bg-green-50 font-bold auto-cell">${e.ba07Amt}</td>
+                <td class="sys-td text-center text-purple-600 bg-purple-50 font-bold auto-cell">${e.subAmt}</td>
+                <td class="sys-td text-center text-purple-600 bg-purple-50 font-bold auto-cell">${e.subAmt}</td>
                 <td class="sys-td extra-col"><input type="number" class="sys-input add_work-input" id="add_work_${i}" value="${getVal('add_work')}" onfocus="this.select()" onchange="saveInput('${e.name}', 'add_work', this.value)"></td>
                 <td class="sys-td extra-col"><input type="number" class="sys-input add_trans-input" id="add_trans_${i}" value="${getVal('add_trans')}" onfocus="this.select()" onchange="saveInput('${e.name}', 'add_trans', this.value)"></td>
                 <td class="sys-td extra-col relative">
                     <input type="number" class="sys-input pension_rate-input auto-input-bg" id="pension_rate_${i}" value="${getVal('pension_rate')}" onfocus="this.select()" onchange="saveInput('${e.name}', 'pension_rate', this.value)">
                     <div class="text-[10px] text-indigo-400 text-center absolute bottom-0 w-full left-0 pointer-events-none">DB:${dbPension}%</div>
+                </td>
+                <td class="sys-td relative">
+                    <input type="number" class="sys-input deduct-input labor_ins-input auto-input-bg" id="labor_ins_${i}" value="${getInsuranceVal('labor_ins', IDX.s.labor)}" onfocus="this.select()" onchange="saveInput('${e.name}', 'labor_ins', this.value)">
+                    <div class="text-[10px] text-indigo-400 text-center absolute bottom-0 w-full left-0 pointer-events-none">匯入:${fmtMoney(importedLabor)}</div>
+                </td>
+                <td class="sys-td relative">
+                    <input type="number" class="sys-input deduct-input health_ins-input auto-input-bg" id="health_ins_${i}" value="${getInsuranceVal('health_ins', IDX.s.health)}" onfocus="this.select()" onchange="saveInput('${e.name}', 'health_ins', this.value)">
+                    <div class="text-[10px] text-indigo-400 text-center absolute bottom-0 w-full left-0 pointer-events-none">匯入:${fmtMoney(importedHealth)}</div>
+                </td>
+                <td class="sys-td relative">
+                    <input type="number" class="sys-input deduct-input health_ins_family-input auto-input-bg" id="health_ins_family_${i}" value="${getInsuranceVal('health_ins_family', IDX.s.health_dep)}" onfocus="this.select()" onchange="saveInput('${e.name}', 'health_ins_family', this.value)">
+                    <div class="text-[10px] text-indigo-400 text-center absolute bottom-0 w-full left-0 pointer-events-none">匯入:${fmtMoney(importedHealthDep)}</div>
                 </td>
                 <td class="sys-td leave-col"><input type="number" class="sys-input leave_full-input" id="leave_full_${i}" value="${getVal('leave_full')}" onfocus="this.select()" onchange="saveInput('${e.name}', 'leave_full', this.value)"></td>
                 <td class="sys-td"><input type="number" class="sys-input leave_half-input bg-yellow-50 border-yellow-200 text-yellow-800" id="leave_half_${i}" value="${getVal('leave_half')}" onfocus="this.select()" onchange="saveInput('${e.name}', 'leave_half', this.value)"></td>
@@ -733,6 +1432,7 @@
     function saveInput(name, field, value) {
         if (!savedManualData[name]) savedManualData[name] = {};
         savedManualData[name][field] = field === 'note' ? value : Number(value);
+        persistCaregiverSessionCache();
     }
 
     function applyBatch(key, val) {
@@ -754,6 +1454,90 @@
         document.getElementById('step-3').scrollIntoView({behavior: 'smooth'});
     }
 
+    async function loadArchivedCaregiverPayroll() {
+        const month = document.getElementById('archived-month').value;
+        if(!month) return alert("請先選擇要查詢的月份");
+        if(!db) return alert("系統尚未完成連線，請稍後再試");
+
+        const btn = document.querySelector('button[onclick="window.loadArchivedCaregiverPayroll()"]');
+        const oldText = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerText = "查詢中...";
+
+        try {
+            archivedCaregiverRecordMap.clear();
+            const caregiverQuery = window.query(window.collection(db, "employees"), window.where("role", "==", "caregiver"));
+            const caregiverSnap = await window.getDocs(caregiverQuery);
+            const caregiverMap = new Map();
+            caregiverSnap.forEach(doc => caregiverMap.set(doc.id, doc.data().name || doc.id));
+
+            const archiveQuery = window.query(window.collection(db, "monthly_records"), window.where("yearMonth", "==", month));
+            const archiveSnap = await window.getDocs(archiveQuery);
+            const rows = [];
+
+            archiveSnap.forEach(doc => {
+                const data = doc.data();
+                if (!caregiverMap.has(data.empId)) return;
+                const summary = data.summary || {};
+                archivedCaregiverRecordMap.set(doc.id, { id: doc.id, ...data });
+                rows.push({
+                    id: doc.id,
+                    name: data.employeeName || caregiverMap.get(data.empId),
+                    yearMonth: data.yearMonth || month,
+                    grossSalary: Number(summary.grossSalary ?? data.finalResult?.grossSalary ?? data.salary ?? 0),
+                    netSalary: Number(summary.netSalary ?? data.finalResult?.netSalary ?? 0),
+                    workHours: Number(summary.workHours ?? data.workHours ?? 0),
+                    transitHours: Number(summary.transitHours ?? data.transitHours ?? 0),
+                    otWorkHours: Number(summary.otWorkHours ?? data.otWorkHours ?? 0),
+                    otTransitHours: Number(summary.otTransitHours ?? data.otTransitHours ?? 0),
+                    updatedAt: data.meta?.updatedAt || data.updatedAt || data.createdAt || ''
+                });
+            });
+
+            rows.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant'));
+
+            const tbody = document.getElementById('archived-history-body');
+            const wrap = document.getElementById('archived-history-section');
+            document.getElementById('archived-summary-count').innerText = rows.length.toLocaleString();
+            document.getElementById('archived-summary-gross').innerText = fmtMoney(rows.reduce((sum, row) => sum + row.grossSalary, 0));
+            document.getElementById('archived-summary-net').innerText = fmtMoney(rows.reduce((sum, row) => sum + row.netSalary, 0));
+            wrap.classList.remove('hidden');
+            document.getElementById('archived-snapshot-panel')?.classList.add('hidden');
+
+            if(rows.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="10" class="sys-td text-center text-slate-400 py-6">此月份沒有已歸檔的居服員薪資資料</td></tr>';
+            } else {
+                tbody.innerHTML = rows.map(row => `
+                    <tr class="hover:bg-slate-50">
+                        <td class="sys-td font-bold">${row.name}</td>
+                        <td class="sys-td">${row.yearMonth}</td>
+                        <td class="sys-td">${fmtMoney(row.grossSalary)}</td>
+                        <td class="sys-td">${fmtMoney(row.netSalary)}</td>
+                        <td class="sys-td">${fmtHours(row.workHours)}</td>
+                        <td class="sys-td">${fmtHours(row.transitHours)}</td>
+                        <td class="sys-td">${fmtHours(row.otWorkHours)}</td>
+                        <td class="sys-td">${fmtHours(row.otTransitHours)}</td>
+                        <td class="sys-td text-xs text-slate-500">${row.updatedAt ? dayjs(row.updatedAt).format('YYYY-MM-DD HH:mm') : '-'}</td>
+                        <td class="sys-td">
+                            <button onclick="window.showArchivedCaregiverSnapshot('${row.id}')" class="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-3 py-1 rounded-lg text-xs transition">
+                                查看快照
+                            </button>
+                        </td>
+                    </tr>
+                `).join('');
+            }
+
+            const archiveMonthInput = document.getElementById('archive-month');
+            if (archiveMonthInput && !archiveMonthInput.value) archiveMonthInput.value = month;
+        } catch (error) {
+            console.error(error);
+            alert("讀取歷史結算資料失敗，請稍後再試");
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = oldText;
+        }
+    }
+
     const val = (r,i) => {
         if(i === undefined || i === -1) return 0;
         return (r[i]==null || isNaN(Number(r[i]))) ? 0 : Number(r[i]);
@@ -767,90 +1551,446 @@
     const fmtMoney = n => Math.round(n).toLocaleString();
     const fmtHours = n => (Math.round(n * 1000) / 1000).toString();
 
+    function classifyCaregiverLeaveType(type) {
+        const normalizedType = String(type || '').trim();
+        if (!normalizedType) return 'nopay';
+        if (CAREGIVER_PAYROLL_RULES.leaveTypes.fullPay.some(ruleType => normalizedType.includes(ruleType))) return 'fullPay';
+        if (CAREGIVER_PAYROLL_RULES.leaveTypes.halfPay.some(ruleType => normalizedType.includes(ruleType))) return 'halfPay';
+        return 'nopay';
+    }
+
+    function getCaregiverSubsidyBreakdown(totalAmount) {
+        const sourceTotal = Number(totalAmount || 0);
+        const half = sourceTotal / 2;
+        return {
+            sourceTotal,
+            remoteBonus: half,
+            transportBonus: half,
+            total: half * 2
+        };
+    }
+
+    function calculateCaregiverOtBaseParts({ baseSalary = 0, licenseBonus = 0, serviceBonus = 0, aa05Amount = 0, aa06Amount = 0, ba07Amount = 0 }) {
+        const parts = {
+            baseSalary: Number(baseSalary || 0),
+            licenseBonus: Number(licenseBonus || 0),
+            serviceBonus: Number(serviceBonus || 0),
+            aa05Amount: Number(aa05Amount || 0),
+            aa06Amount: Number(aa06Amount || 0),
+            ba07Amount: Number(ba07Amount || 0)
+        };
+        return {
+            ...parts,
+            total: parts.baseSalary + parts.licenseBonus + parts.serviceBonus + parts.aa05Amount + parts.aa06Amount + parts.ba07Amount
+        };
+    }
+
+    function normalizeCaregiverEmployeeData(emp) {
+        const hours = {};
+        for (const key in IDX.h) hours[key] = sum(emp.hRow, IDX.h[key]);
+
+        const saved = savedManualData[emp.name] || {};
+        const dbData = dbEmployees.get(emp.name) || null;
+        const manual = {
+            skill: Number(saved['skill'] || 0),
+            license: Number(saved['license_bonus'] || 0),
+            birthday: Number(saved['birthday'] || 0),
+            service: Number(saved['service'] || 0),
+            meeting: Number(saved['meeting'] || 0),
+            festival: Number(saved['festival'] || 0),
+            other: Number(saved['other'] || 0),
+            otherDeduct: Number(saved['other_deduct'] || 0),
+            addWork: Number(saved['add_work'] || 0),
+            addTrans: Number(saved['add_trans'] || 0),
+            pensionRate: Number(saved['pension_rate'] || 0),
+            laborIns: saved['labor_ins'] !== undefined ? Number(saved['labor_ins']) : null,
+            healthIns: saved['health_ins'] !== undefined ? Number(saved['health_ins']) : null,
+            healthInsFamily: saved['health_ins_family'] !== undefined ? Number(saved['health_ins_family']) : null,
+            note: saved['note'] || ''
+        };
+        const leave = {
+            fullHours: Number(saved['leave_full'] || 0),
+            halfHours: Number(saved['leave_half'] || 0),
+            noPayHours: Number(saved['leave_nopay'] || 0),
+            details: saved['leave_details'] || []
+        };
+        const rates = {
+            baseRate: saved['base_rate'] !== undefined ? Number(saved['base_rate']) : 0,
+            transitRate: saved['transit_rate'] !== undefined ? Number(saved['transit_rate']) : 0
+        };
+        const insurance = {
+            level: val(emp.sRow, IDX.s.level),
+            labor: manual.laborIns !== null ? manual.laborIns : val(emp.sRow, IDX.s.labor),
+            health: manual.healthIns !== null ? manual.healthIns : val(emp.sRow, IDX.s.health),
+            healthDep: manual.healthInsFamily !== null ? manual.healthInsFamily : val(emp.sRow, IDX.s.health_dep),
+            companyPensionRate: 0.06
+        };
+        const splitCodes = {
+            aa11: Number(emp.aaAmt || 0),
+            aa05: Number(emp.aa05Amt || 0),
+            aa06: Number(emp.aa06Amt || 0),
+            ba07: Number(emp.ba07Amt || 0)
+        };
+        const subsidy = getCaregiverSubsidyBreakdown(Number(emp.subAmt || 0) * 2);
+
+        hours.work_day += manual.addWork;
+        hours.trans_work += manual.addTrans;
+
+        return {
+            source: emp,
+            dbData,
+            saved,
+            manual,
+            leave,
+            rates,
+            insurance,
+            splitCodes,
+            subsidy,
+            hours
+        };
+    }
+
+    function calculateCaregiverPayroll(normalized) {
+        const h = normalized.hours;
+        const m = normalized.manual;
+        const personalBaseRate = normalized.rates.baseRate;
+        const transitRate = normalized.rates.transitRate;
+        const pensionRate = normalized.manual.pensionRate;
+        const leaveFullHours = normalized.leave.fullHours;
+        const leaveHalfHours = normalized.leave.halfHours;
+        const subsidyBreakdown = normalized.subsidy;
+        const insuranceLevel = normalized.insurance.level;
+
+        const leaveFullAmount = Math.round(leaveFullHours * personalBaseRate);
+        const leaveHalfAmount = Math.round(leaveHalfHours * personalBaseRate * 0.5);
+        const baseSalary = Math.round(personalBaseRate * h.work_day);
+        const totalWorkHours = Math.round((h.work_day + h.work_ot_9_10 + h.work_ot_11_12 + h.hol_ot_0_2 + h.hol_ot_3_8 + h.hol_ot_9_10 + h.nat_ot_0_8 + h.nat_ot_9_10) * 1000) / 1000;
+        const totalTransitHours = Math.round((h.trans_work + h.trans_work_9_10 + h.trans_work_11_12 + h.trans_hol_0_2 + h.trans_hol_3_8 + h.trans_hol_9_10 + h.trans_nat) * 1000) / 1000;
+
+        const hourlyBonus = 0;
+        const finalLicense = (normalized.saved['license_bonus'] !== undefined) ? m.license : val(normalized.source.sRow, IDX.s.license);
+        const otBaseParts = calculateCaregiverOtBaseParts({
+            baseSalary,
+            licenseBonus: finalLicense,
+            serviceBonus: m.service,
+            aa05Amount: normalized.splitCodes.aa05,
+            aa06Amount: normalized.splitCodes.aa06,
+            ba07Amount: normalized.splitCodes.ba07
+        });
+        const otBase = h.work_day > 0 ? Math.round(otBaseParts.total / h.work_day) : 0;
+
+        const pay = {
+            wot: Math.round(otBase * 1.34 * h.work_ot_9_10 + otBase * 1.67 * h.work_ot_11_12),
+            hot: Math.round(otBase * 1.34 * h.hol_ot_0_2 + otBase * 1.67 * h.hol_ot_3_8 + otBase * 2.67 * h.hol_ot_9_10),
+            not: Math.round(otBase * 2 * h.nat_ot_0_8 + otBase * 2.34 * h.nat_ot_9_10),
+            trans_100: Math.round(transitRate * h.trans_work),
+            trans_134: Math.round(transitRate * 1.34 * (h.trans_work_9_10 + h.trans_hol_0_2)),
+            trans_167: Math.round(transitRate * 1.67 * (h.trans_work_11_12 + h.trans_hol_3_8)),
+            trans_267: Math.round(transitRate * 2.67 * h.trans_hol_9_10),
+            trans_200: Math.round(transitRate * 2 * h.trans_nat)
+        };
+        const totalTransitPay = pay.trans_100 + pay.trans_134 + pay.trans_167 + pay.trans_267 + pay.trans_200;
+
+        const grossSalary = Math.round(
+            baseSalary +
+            pay.wot + pay.hot + pay.not +
+            totalTransitPay +
+            normalized.splitCodes.aa11 + normalized.splitCodes.aa05 + normalized.splitCodes.aa06 + normalized.splitCodes.ba07 +
+            finalLicense + subsidyBreakdown.total + hourlyBonus +
+            m.skill + m.birthday + m.service + m.meeting + m.festival + m.other +
+            leaveFullAmount + leaveHalfAmount
+        );
+
+        const employeePension = Math.round(insuranceLevel * (pensionRate / 100));
+        const employerPension = Math.round(insuranceLevel * normalized.insurance.companyPensionRate);
+        const totalDeduction = normalized.insurance.labor + normalized.insurance.health + normalized.insurance.healthDep + employeePension + m.otherDeduct;
+        const otHours = h.work_ot_9_10 + h.work_ot_11_12 + h.hol_ot_0_2 + h.hol_ot_3_8 + h.hol_ot_9_10 + h.nat_ot_0_8 + h.nat_ot_9_10;
+        const otTransitHours = h.trans_work_9_10 + h.trans_work_11_12 + h.trans_hol_0_2 + h.trans_hol_3_8 + h.trans_hol_9_10 + h.trans_nat;
+
+        return {
+            h,
+            m,
+            personalBaseRate,
+            transitRate,
+            pensionRate,
+            insuranceLevel,
+            leaveFullHours,
+            leaveHalfHours,
+            leaveNoPayHours: normalized.leave.noPayHours,
+            leaveDetails: normalized.leave.details,
+            leaveFullAmount,
+            leaveHalfAmount,
+            subsidyBreakdown,
+            baseSalary,
+            totalWorkHours,
+            totalTransitHours,
+            hourlyBonus,
+            finalLicense,
+            otBaseParts,
+            otBase,
+            pay,
+            totalTransitPay,
+            grossSalary,
+            employeePension,
+            employerPension,
+            totalDeduction,
+            netSalary: grossSalary - totalDeduction,
+            otHours,
+            otTransitHours
+        };
+    }
+
+    function cloneForArchive(value) {
+        return JSON.parse(JSON.stringify(value ?? null));
+    }
+
+    function buildCaregiverSummaryFromResultRow(r) {
+        return {
+            grossSalary: Number(r['本月薪資'] || 0),
+            netSalary: Number(r['實領薪資'] || 0),
+            workHours: Number(r['本月工時'] || 0),
+            transitHours: Number(r['轉場工時'] || 0),
+            otWorkHours: Number(r['歸檔_加班工時'] || 0),
+            otTransitHours: Number(r['歸檔_加班轉場'] || 0),
+            totalBaseHours: Number(((r['本月工時'] || 0) + (r['轉場工時'] || 0)).toFixed(2))
+        };
+    }
+
+    function buildCaregiverPayslipDataFromResultRow(r) {
+        return {
+            title: currentDateLabel,
+            employeeName: r['姓名'],
+            employeeCode: r['編號'],
+            info: {
+                insuranceLevel: Number(r['投保級距'] || 0),
+                baseRate: Number(r['約定時薪'] || 0),
+                transitRate: Number(r['轉場費率'] || 0),
+                otBase: Number(r['加班費基數'] || 0),
+                employerPension: Number(r['勞退提撥'] || 0)
+            },
+            leftPanel: {
+                workHours: Number(r['本月工時'] || 0),
+                totalWorkHours: Number(r['工時總計'] || 0),
+                transitHours: Number(r['轉場工時'] || 0),
+                totalTransitHours: Number(r['轉場總計'] || 0),
+                leaveDetails: cloneForArchive(r['請假明細'] || []),
+                deductions: {
+                    laborIns: Number(r['勞保費'] || 0),
+                    healthIns: Number(r['健保費'] || 0),
+                    healthInsFamily: Number(r['健保費(眷屬)'] || 0),
+                    employeePension: Number(r['勞退自提'] || 0),
+                    otherDeduct: Number(r['其他扣款'] || 0),
+                    totalDeduction: Number(r['代扣總計'] || 0)
+                }
+            },
+            rightPanel: {
+                baseSalary: Number(r['本薪'] || 0),
+                workdayOtPay: Number(r['工作日加班費'] || 0),
+                holidayOtPay: Number(r['休假日加班費'] || 0),
+                nationalOtPay: Number(r['國定加班費'] || 0),
+                transitPay: {
+                    normal: Number(r['轉場費_1.0'] || 0),
+                    pay134: Number(r['轉場費_1.34'] || 0),
+                    pay167: Number(r['轉場費_1.67'] || 0),
+                    pay267: Number(r['轉場費_2.67'] || 0),
+                    pay200: Number(r['轉場費_2.0'] || 0)
+                },
+                leavePay: {
+                    fullPayHours: Number(r['全薪假時數'] || 0),
+                    halfPayHours: Number(r['半薪假時數'] || 0),
+                    noPayHours: Number(r['無薪假時數'] || 0),
+                    fullPayAmount: Number(r['全薪假給付'] || 0),
+                    halfPayAmount: Number(r['半薪假給付'] || 0)
+                },
+                splitCodes: {
+                    aa11: Number(r['AA11'] || 0),
+                    aa05: Number(r['AA05'] || 0),
+                    aa06: Number(r['AA06'] || 0),
+                    ba07: Number(r['BA07'] || 0)
+                },
+                bonuses: {
+                    remoteBonus: Number(r['偏鄉加給'] || 0),
+                    transportBonus: Number(r['交通加給'] || 0),
+                    licenseBonus: Number(r['丙證加給'] || 0),
+                    skillBonus: Number(r['技能強化獎勵金'] || 0),
+                    birthdayBonus: Number(r['生日禮金'] || 0),
+                    serviceBonus: Number(r['服務獎金'] || 0),
+                    meetingBonus: Number(r['會議出席'] || 0),
+                    festivalBonus: Number(r['中秋端午'] || 0),
+                    otherPlus: Number(r['其他'] || 0)
+                },
+                grossSalary: Number(r['本月薪資'] || 0),
+                netSalary: Number(r['實領薪資'] || 0)
+            },
+            footerNote: r['個人備註'] || ''
+        };
+    }
+
+    function buildCaregiverArchivePayload(r, month, calculatedAt) {
+        const mergedEmp = merged.find(emp => emp.name === r['姓名']);
+        const saved = cloneForArchive(savedManualData[r['姓名']] || {});
+        const dbData = dbEmployees.get(r['姓名']) || {};
+        const leaveDetails = cloneForArchive(r['請假明細'] || []);
+        const summary = cloneForArchive(r._summary || buildCaregiverSummaryFromResultRow(r));
+        const payslipData = cloneForArchive(r._payslipData || buildCaregiverPayslipDataFromResultRow(r));
+
+        const snapshot = {
+            employee: {
+                empId: r.empId,
+                code: r['編號'],
+                name: r['姓名'],
+                insuranceLevel: Number(r['投保級距'] || 0),
+                baseRate: Number(r['約定時薪'] || 0),
+                transitRate: Number(r['轉場費率'] || 0),
+                otBase: Number(r['加班費基數'] || 0),
+                licenseBonus: Number(r['丙證加給'] || 0),
+                serviceBonus: Number(r['服務獎金'] || 0),
+                pensionRate: Number(r['自提趴數'] || 0),
+                db: {
+                    id: dbData.id || null,
+                    role: dbData.role || null,
+                    hasLicense: dbData.hasLicense === true,
+                    hourlyWage: Number(dbData.hourlyWage || 0),
+                    hourlyBonus: Number(dbData.hourlyBonus || 0),
+                    transitRate: Number(dbData.transitRate || dbData.transitWage || 0)
+                }
+            },
+            importedHours: {
+                workDayHours: Number(r['本月工時'] || 0),
+                totalWorkHours: Number(r['工時總計'] || 0),
+                otWork_9_10: Number(r['平加(9-10)時'] || 0),
+                otWork_11_12: Number(r['平加(11-12)時'] || 0),
+                otHoliday_0_2: Number(r['休加(0-2)時'] || 0),
+                otHoliday_3_8: Number(r['休加(3-8)時'] || 0),
+                otHoliday_9_10: Number(r['休加(9-10)時'] || 0),
+                otNational_0_8: Number(r['國加(0-8)時'] || 0),
+                otNational_9_10: Number(r['國加(9-10)時'] || 0),
+                transitNormal: Number(r['轉場工時'] || 0),
+                totalTransitHours: Number(r['轉場總計'] || 0),
+                transit_9_10: Number(r['平轉(9-10)時'] || 0),
+                transit_11_12: Number(r['平轉(11-12)時'] || 0),
+                transitHoliday_0_2: Number(r['休轉(0-2)時'] || 0),
+                transitHoliday_3_8: Number(r['休轉(3-8)時'] || 0),
+                transitHoliday_9_10: Number(r['休轉(9-10)時'] || 0),
+                transitNational: Number(r['國轉工時'] || 0),
+                archivedOtWorkHours: Number(r['歸檔_加班工時'] || 0),
+                archivedOtTransitHours: Number(r['歸檔_加班轉場'] || 0)
+            },
+            splitCodes: {
+                aa11: Number(r['AA11'] || 0),
+                aa05: Number(r['AA05'] || 0),
+                aa06: Number(r['AA06'] || 0),
+                ba07: Number(r['BA07'] || 0)
+            },
+            subsidies: {
+                sourceTotal: Number((r['偏鄉加給'] || 0) + (r['交通加給'] || 0)),
+                remoteBonus: Number(r['偏鄉加給'] || 0),
+                transportBonus: Number(r['交通加給'] || 0)
+            },
+            leave: {
+                fullPayHours: Number(r['全薪假時數'] || 0),
+                halfPayHours: Number(r['半薪假時數'] || 0),
+                noPayHours: Number(r['無薪假時數'] || 0),
+                details: leaveDetails
+            },
+            manualInputs: {
+                ...saved
+            },
+            sourceRows: mergedEmp ? {
+                hRow: cloneForArchive(mergedEmp.hRow),
+                sRow: cloneForArchive(mergedEmp.sRow)
+            } : null,
+            calculationBasis: {
+                otBaseIncludedItems: cloneForArchive(CAREGIVER_PAYROLL_RULES.overtimeBase.includedItems),
+                leaveRuleVersion: 'caregiver-leave-rule-v1',
+                subsidyRule: CAREGIVER_PAYROLL_RULES.subsidy.splitMode,
+                aa11Rule: 'keep-current'
+            },
+            calculatedLines: {
+                baseSalary: Number(r['本薪'] || 0),
+                workdayOtPay: Number(r['工作日加班費'] || 0),
+                holidayOtPay: Number(r['休假日加班費'] || 0),
+                nationalOtPay: Number(r['國定加班費'] || 0),
+                transitPayNormal: Number(r['轉場費_1.0'] || 0),
+                transitPay134: Number(r['轉場費_1.34'] || 0),
+                transitPay167: Number(r['轉場費_1.67'] || 0),
+                transitPay267: Number(r['轉場費_2.67'] || 0),
+                transitPay200: Number(r['轉場費_2.0'] || 0),
+                fullPayLeaveAmount: Number(r['全薪假給付'] || 0),
+                halfPayLeaveAmount: Number(r['半薪假給付'] || 0),
+                aa11: Number(r['AA11'] || 0),
+                aa05: Number(r['AA05'] || 0),
+                aa06: Number(r['AA06'] || 0),
+                ba07: Number(r['BA07'] || 0),
+                remoteBonus: Number(r['偏鄉加給'] || 0),
+                transportBonus: Number(r['交通加給'] || 0),
+                licenseBonus: Number(r['丙證加給'] || 0),
+                skillBonus: Number(r['技能強化獎勵金'] || 0),
+                birthdayBonus: Number(r['生日禮金'] || 0),
+                serviceBonus: Number(r['服務獎金'] || 0),
+                meetingBonus: Number(r['會議出席'] || 0),
+                festivalBonus: Number(r['中秋端午'] || 0),
+                otherPlus: Number(r['其他'] || 0),
+                laborIns: Number(r['勞保費'] || 0),
+                healthIns: Number(r['健保費'] || 0),
+                healthInsFamily: Number(r['健保費(眷屬)'] || 0),
+                employeePension: Number(r['勞退自提'] || 0),
+                employerPension: Number(r['勞退提撥'] || 0),
+                otherDeduct: Number(r['其他扣款'] || 0),
+                totalDeduction: Number(r['代扣總計'] || 0),
+                grossSalary: Number(r['本月薪資'] || 0),
+                netSalary: Number(r['實領薪資'] || 0)
+            }
+        };
+
+        return {
+            salaryType: 'caregiver',
+            employeeName: r['姓名'],
+            summary,
+            finalResult: {
+                grossSalary: summary.grossSalary,
+                netSalary: summary.netSalary,
+                employerPension: Number(r['勞退提撥'] || 0),
+                employeePension: Number(r['勞退自提'] || 0),
+                totalDeduction: Number(r['代扣總計'] || 0),
+                calculatedAt
+            },
+            snapshot,
+            payslipData,
+            meta: {
+                sourceFiles: {
+                    mainWorkbook: importedFileNames.main || null,
+                    splitWorkbook: importedFileNames.a || null,
+                    subsidyWorkbook: importedFileNames.b || null
+                },
+                appVersion: 'salary_caregiver_snapshot_v1',
+                archivedAt: calculatedAt,
+                updatedAt: calculatedAt
+            }
+        };
+    }
+
     function calculate() {
         let totalSalarySum = 0;
         let totalNetSum = 0;
 
         results = merged.map((emp, i) => {
-            const h = {}; for(let k in IDX.h) h[k] = sum(emp.hRow, IDX.h[k]);
-            
-            const saved = savedManualData[emp.name] || {};
-            const m = {
-                skill: saved['skill'] || 0,
-                license: saved['license_bonus'] || 0,
-                birthday: saved['birthday'] || 0,
-                service: saved['service'] || 0,
-                meeting: saved['meeting'] || 0,
-                festival: saved['festival'] || 0,
-                other: saved['other'] || 0,
-                other_deduct: saved['other_deduct'] || 0
-            };
-            
-            const personal_base_rate = saved['base_rate'] !== undefined ? saved['base_rate'] : 0; 
-            const trans_rate = saved['transit_rate'] !== undefined ? saved['transit_rate'] : 0;
-            const add_work = saved['add_work'] || 0;
-            const add_trans = saved['add_trans'] || 0;
-            const pension_rate = Number(saved['pension_rate']) || 0;
-            const note = saved['note'] || "";
-
-            const leave_full_h = saved['leave_full'] || 0;
-            const leave_half_h = saved['leave_half'] || 0;
-            const leave_nopay_h = saved['leave_nopay'] || 0;
-            const leave_details = saved['leave_details'] || []; 
-
-            const leave_full_amt = Math.round(leave_full_h * personal_base_rate);
-            const leave_half_amt = Math.round(leave_half_h * personal_base_rate * 0.5);
-
-            const s = emp.sRow;
-            const ins_level = val(s, 67);
-
-            h.work_day += add_work;
-            h.trans_work += add_trans;
-
-            const base = Math.round(personal_base_rate * h.work_day);
-            const total_work_hours = Math.round((h.work_day + h.work_ot_9_10 + h.work_ot_11_12 + h.hol_ot_0_2 + h.hol_ot_3_8 + h.hol_ot_9_10 + h.nat_ot_0_8 + h.nat_ot_9_10)*1000)/1000;
-            const total_trans_hours = Math.round((h.trans_work + h.trans_work_9_10 + h.trans_work_11_12 + h.trans_hol_0_2 + h.trans_hol_3_8 + h.trans_hol_9_10 + h.trans_nat)*1000)/1000;
-
-            let hourly_bonus = 0;
-            let final_license = (saved['license_bonus'] !== undefined) ? m.license : val(s, IDX.s.license);
-
-            const ot_numerator = base + final_license + m.service + hourly_bonus + emp.aa05Amt + emp.aa06Amt;
-            const ot_base = h.work_day > 0 ? Math.round(ot_numerator / h.work_day) : 0;
-            
-            const pay = {
-                wot: Math.round(ot_base*1.34*h.work_ot_9_10 + ot_base*1.67*h.work_ot_11_12),
-                hot: Math.round(ot_base*1.34*h.hol_ot_0_2 + ot_base*1.67*h.hol_ot_3_8 + ot_base*2.67*h.hol_ot_9_10),
-                not: Math.round(ot_base*2*h.nat_ot_0_8 + ot_base*2.34*h.nat_ot_9_10),
-                // ★ 拆解轉場費 (Granular Transit Calculation)
-                trans_100: Math.round(trans_rate * h.trans_work),
-                trans_134: Math.round(trans_rate * 1.34 * (h.trans_work_9_10 + h.trans_hol_0_2)),
-                trans_167: Math.round(trans_rate * 1.67 * (h.trans_work_11_12 + h.trans_hol_3_8)),
-                trans_267: Math.round(trans_rate * 2.67 * h.trans_hol_9_10),
-                trans_200: Math.round(trans_rate * 2 * h.trans_nat)
-            };
-            
-            // 轉場費總計 (用於顯示在列表表格，薪資單用細項)
-            const total_trans_pay = pay.trans_100 + pay.trans_134 + pay.trans_167 + pay.trans_267 + pay.trans_200;
-
-            const total = Math.round(base + pay.wot + pay.hot + pay.not + total_trans_pay + emp.aaAmt + emp.aa05Amt + emp.aa06Amt + final_license + emp.subAmt*2 + hourly_bonus + m.skill + m.birthday + m.service + m.meeting + m.festival + m.other + leave_full_amt + leave_half_amt);
-            const pension_self = Math.round(ins_level * (pension_rate / 100));
-            const pension_employer = Math.round(ins_level * 0.06);
-            const deduct = val(s,IDX.s.labor) + val(s,IDX.s.health) + val(s,IDX.s.health_dep) + pension_self + m.other_deduct;
-
-            totalSalarySum += total;
-            totalNetSum += (total - deduct);
-
-            const dbData = dbEmployees.get(emp.name);
+            const normalized = normalizeCaregiverEmployeeData(emp);
+            const calc = calculateCaregiverPayroll(normalized);
+            const h = calc.h;
+            const m = calc.m;
+            const dbData = normalized.dbData;
             const empId = dbData ? dbData.id : null;
-            const ot_hours = h.work_ot_9_10 + h.work_ot_11_12 + h.hol_ot_0_2 + h.hol_ot_3_8 + h.hol_ot_9_10 + h.nat_ot_0_8 + h.nat_ot_9_10;
-            const ot_trans_hours = h.trans_work_9_10 + h.trans_work_11_12 + h.trans_hol_0_2 + h.trans_hol_3_8 + h.trans_hol_9_10 + h.trans_nat;
+
+            totalSalarySum += calc.grossSalary;
+            totalNetSum += calc.netSalary;
 
             return {
                 "編號": emp.id, "姓名": emp.name, "empId": empId,
-                "投保級距": ins_level, "加班費基數": ot_base, "本月薪資": total, "實領薪資": total-deduct,
-                "工時總計": total_work_hours, "轉場總計": total_trans_hours,
-                "勞退提撥": pension_employer, "勞退自提": pension_self, "自提趴數": pension_rate,
-                "約定時薪": personal_base_rate, "轉場費率": trans_rate,
+                "投保級距": calc.insuranceLevel, "加班費基數": calc.otBase, "本月薪資": calc.grossSalary, "實領薪資": calc.netSalary,
+                "工時總計": calc.totalWorkHours, "轉場總計": calc.totalTransitHours,
+                "勞退提撥": calc.employerPension, "勞退自提": calc.employeePension, "自提趴數": calc.pensionRate,
+                "約定時薪": calc.personalBaseRate, "轉場費率": calc.transitRate,
                 "本月工時": h.work_day, 
                 "平加(9-10)時": h.work_ot_9_10, "平加(11-12)時": h.work_ot_11_12,
                 "休加(0-2)時": h.hol_ot_0_2, "休加(3-8)時": h.hol_ot_3_8, "休加(9-10)時": h.hol_ot_9_10,
@@ -858,35 +1998,92 @@
                 "轉場工時": h.trans_work, 
                 "平轉(9-10)時": h.trans_work_9_10, "平轉(11-12)時": h.trans_work_11_12,
                 "休轉(0-2)時": h.trans_hol_0_2, "休轉(3-8)時": h.trans_hol_3_8, "休轉(9-10)時": h.trans_hol_9_10, "國轉工時": h.trans_nat,
-                "本薪": base, "工作日加班費": pay.wot, "休假日加班費": pay.hot, "國定加班費": pay.not,
+                "本薪": calc.baseSalary, "工作日加班費": calc.pay.wot, "休假日加班費": calc.pay.hot, "國定加班費": calc.pay.not,
                 
-                // ★ 傳遞細項金額
-                "轉場費": total_trans_pay,
-                "轉場費_1.0": pay.trans_100,
-                "轉場費_1.34": pay.trans_134,
-                "轉場費_1.67": pay.trans_167,
-                "轉場費_2.67": pay.trans_267,
-                "轉場費_2.0": pay.trans_200,
+                "轉場費": calc.totalTransitPay,
+                "轉場費_1.0": calc.pay.trans_100,
+                "轉場費_1.34": calc.pay.trans_134,
+                "轉場費_1.67": calc.pay.trans_167,
+                "轉場費_2.67": calc.pay.trans_267,
+                "轉場費_2.0": calc.pay.trans_200,
 
-                "AA11": emp.aaAmt, "AA05": emp.aa05Amt, "AA06": emp.aa06Amt,
-                "丙證加給": final_license, 
-                "偏鄉加給": emp.subAmt, "交通加給": emp.subAmt,
+                "AA11": normalized.splitCodes.aa11, "AA05": normalized.splitCodes.aa05, "AA06": normalized.splitCodes.aa06, "BA07": normalized.splitCodes.ba07,
+                "丙證加給": calc.finalLicense, 
+                "偏鄉加給": calc.subsidyBreakdown.remoteBonus, "交通加給": calc.subsidyBreakdown.transportBonus,
                 "技能強化獎勵金": m.skill,
                 "生日禮金": m.birthday, "服務獎金": m.service, "會議出席": m.meeting, "中秋端午": m.festival, "其他": m.other,
-                "其他扣款": m.other_deduct,
-                "全薪假時數": leave_full_h, "半薪假時數": leave_half_h, "無薪假時數": leave_nopay_h,
-                "全薪假給付": leave_full_amt, "半薪假給付": leave_half_amt,
-                "請假明細": leave_details, 
-                "勞保費": val(s,IDX.s.labor), "健保費": val(s,IDX.s.health), "健保費(眷屬)": val(s,IDX.s.health_dep), "代扣總計": deduct,
-                "個人備註": note,
-                "歸檔_加班工時": ot_hours, "歸檔_加班轉場": ot_trans_hours
+                "其他扣款": m.otherDeduct,
+                "全薪假時數": calc.leaveFullHours, "半薪假時數": calc.leaveHalfHours, "無薪假時數": calc.leaveNoPayHours,
+                "全薪假給付": calc.leaveFullAmount, "半薪假給付": calc.leaveHalfAmount,
+                "請假明細": calc.leaveDetails, 
+                "勞保費": normalized.insurance.labor, "健保費": normalized.insurance.health, "健保費(眷屬)": normalized.insurance.healthDep, "代扣總計": calc.totalDeduction,
+                "個人備註": normalized.manual.note,
+                "歸檔_加班工時": calc.otHours, "歸檔_加班轉場": calc.otTransitHours,
+                "_summary": buildCaregiverSummaryFromResultRow({
+                    "本月薪資": calc.grossSalary,
+                    "實領薪資": calc.netSalary,
+                    "本月工時": h.work_day,
+                    "轉場工時": h.trans_work,
+                    "歸檔_加班工時": calc.otHours,
+                    "歸檔_加班轉場": calc.otTransitHours
+                }),
+                "_payslipData": buildCaregiverPayslipDataFromResultRow({
+                    "編號": emp.id,
+                    "姓名": emp.name,
+                    "投保級距": calc.insuranceLevel,
+                    "約定時薪": calc.personalBaseRate,
+                    "轉場費率": calc.transitRate,
+                    "加班費基數": calc.otBase,
+                    "勞退提撥": calc.employerPension,
+                    "本月工時": h.work_day,
+                    "工時總計": calc.totalWorkHours,
+                    "轉場工時": h.trans_work,
+                    "轉場總計": calc.totalTransitHours,
+                    "請假明細": calc.leaveDetails,
+                    "勞保費": normalized.insurance.labor,
+                    "健保費": normalized.insurance.health,
+                    "健保費(眷屬)": normalized.insurance.healthDep,
+                    "勞退自提": calc.employeePension,
+                    "其他扣款": m.otherDeduct,
+                    "代扣總計": calc.totalDeduction,
+                    "本薪": calc.baseSalary,
+                    "工作日加班費": calc.pay.wot,
+                    "休假日加班費": calc.pay.hot,
+                    "國定加班費": calc.pay.not,
+                    "轉場費_1.0": calc.pay.trans_100,
+                    "轉場費_1.34": calc.pay.trans_134,
+                    "轉場費_1.67": calc.pay.trans_167,
+                    "轉場費_2.67": calc.pay.trans_267,
+                    "轉場費_2.0": calc.pay.trans_200,
+                    "全薪假時數": calc.leaveFullHours,
+                    "半薪假時數": calc.leaveHalfHours,
+                    "無薪假時數": calc.leaveNoPayHours,
+                    "全薪假給付": calc.leaveFullAmount,
+                    "半薪假給付": calc.leaveHalfAmount,
+                    "AA11": normalized.splitCodes.aa11,
+                    "AA05": normalized.splitCodes.aa05,
+                    "AA06": normalized.splitCodes.aa06,
+                    "BA07": normalized.splitCodes.ba07,
+                    "偏鄉加給": calc.subsidyBreakdown.remoteBonus,
+                    "交通加給": calc.subsidyBreakdown.transportBonus,
+                    "丙證加給": calc.finalLicense,
+                    "技能強化獎勵金": m.skill,
+                    "生日禮金": m.birthday,
+                    "服務獎金": m.service,
+                    "會議出席": m.meeting,
+                    "中秋端午": m.festival,
+                    "其他": m.other,
+                    "本月薪資": calc.grossSalary,
+                    "實領薪資": calc.netSalary,
+                    "個人備註": normalized.manual.note
+                })
             };
         });
 
         document.getElementById('total-salary-sum').innerText = fmtMoney(totalSalarySum);
         document.getElementById('total-net-sum').innerText = fmtMoney(totalNetSum);
 
-        const keys = Object.keys(results[0]).filter(k => !k.startsWith("歸檔_") && !k.startsWith("轉場費_") && k !== "empId" && k !== "請假明細");
+        const keys = Object.keys(results[0]).filter(k => !k.startsWith("歸檔_") && !k.startsWith("轉場費_") && !k.startsWith("_") && k !== "empId" && k !== "請假明細");
         document.getElementById('thead-result').innerHTML = keys.map(k=>`<th class="sys-th">${k}</th>`).join('');
         document.getElementById('tbody-result').innerHTML = results.map(r=>`<tr>${keys.map(k => {
             const v = r[k];
@@ -921,13 +2118,25 @@
                 if(!r.empId) continue; 
                 const q = window.query(window.collection(db, "monthly_records"), window.where("empId", "==", r.empId), window.where("yearMonth", "==", month));
                 const snap = await window.getDocs(q);
-                const finalResult = { grossSalary: r['本月薪資'], netSalary: r['實領薪資'], employerPension: r['勞退提撥'], employeePension: r['勞退自提'], totalDeduction: r['代扣總計'], calculatedAt: new Date().toISOString() };
-                const data = { empId: r.empId, yearMonth: month, salary: r['本月薪資'], workHours: r['本月工時'], transitHours: r['轉場工時'], otWorkHours: r['歸檔_加班工時'], otTransitHours: r['歸檔_加班轉場'], totalBaseHours: parseFloat((r['本月工時'] + r['轉場工時']).toFixed(2)), finalResult: finalResult, updatedAt: new Date().toISOString() };
+                const calculatedAt = new Date().toISOString();
+                const archivePayload = buildCaregiverArchivePayload(r, month, calculatedAt);
+                const data = {
+                    empId: r.empId,
+                    yearMonth: month,
+                    salary: r['本月薪資'],
+                    workHours: r['本月工時'],
+                    transitHours: r['轉場工時'],
+                    otWorkHours: r['歸檔_加班工時'],
+                    otTransitHours: r['歸檔_加班轉場'],
+                    totalBaseHours: parseFloat((r['本月工時'] + r['轉場工時']).toFixed(2)),
+                    updatedAt: calculatedAt,
+                    ...archivePayload
+                };
                 if(!snap.empty) await window.updateDoc(window.doc(db, "monthly_records", snap.docs[0].id), data);
-                else await window.addDoc(window.collection(db, "monthly_records"), { ...data, createdAt: new Date().toISOString() });
+                else await window.addDoc(window.collection(db, "monthly_records"), { ...data, createdAt: calculatedAt });
                 count++;
             }
-            alert(`✅ 成功歸檔 ${count} 筆資料 (含會計數據)！`);
+            alert(`✅ 成功歸檔 ${count} 筆居服員薪資資料！`);
         } catch(e) { console.error(e); alert("❌ 歸檔失敗，請檢查網路或權限"); } finally { btn.innerHTML = oldText; btn.disabled = false; }
     }
 
@@ -963,12 +2172,12 @@
         const globalNote = document.getElementById('custom-note').value;
         if(!name || name==='請選擇員工...') return;
         const d = empMap.get(name);
+        const payslipData = d?._payslipData || buildCaregiverPayslipDataFromResultRow(d || {});
         const el = document.getElementById('payslip-entity');
         
         el.querySelectorAll('[data-k]').forEach(dom => {
             const k = dom.getAttribute('data-k');
             if(d[k]!==undefined) {
-                // ★ 隱藏金額為 0 的轉場費行
                 if(k.startsWith("轉場費_")) {
                     const row = dom.closest('tr');
                     if(d[k] > 0) {
@@ -989,12 +2198,11 @@
             }
         });
 
-        // 請假明細動態顯示
         const leaveHeader = document.getElementById('leave-section-header');
         let next = leaveHeader.nextElementSibling;
         while(next && next.classList.contains('leave-dynamic-row')) { const toRemove = next; next = next.nextElementSibling; toRemove.remove(); }
-        if (d['請假明細'] && d['請假明細'].length > 0) {
-            const aggregated = d['請假明細'].reduce((acc, curr) => { acc[curr.type] = (acc[curr.type] || 0) + curr.hours; return acc; }, {});
+        if (payslipData.leftPanel.leaveDetails && payslipData.leftPanel.leaveDetails.length > 0) {
+            const aggregated = payslipData.leftPanel.leaveDetails.reduce((acc, curr) => { acc[curr.type] = (acc[curr.type] || 0) + curr.hours; return acc; }, {});
             Object.entries(aggregated).forEach(([type, hours]) => {
                 const row = document.createElement('tr');
                 row.className = 'leave-dynamic-row leave-row'; 
@@ -1009,7 +2217,7 @@
         }
 
         let footerHtml = '';
-        if (d['個人備註']) footerHtml += `<div class="footer-section"><span class="badge badge-personal">[個人]</span>${d['個人備註']}</div>`;
+        if (payslipData.footerNote) footerHtml += `<div class="footer-section"><span class="badge badge-personal">[個人]</span>${payslipData.footerNote}</div>`;
         if (globalNote) footerHtml += `<div class="footer-section"><span class="badge badge-public">[公告]</span>${globalNote.replace(/\n/g, '<br>')}</div>`;
         document.getElementById('footer-note').innerHTML = footerHtml;
     }
@@ -1099,7 +2307,7 @@
             const emp = results[i];
             document.getElementById('sel-emp').value = emp.姓名;
             renderPreview();
-            txt.innerText = `正在錄製：${emp.姓名} (${i+1}/${results.length})`;
+            txt.innerText = `正在匯出：${emp.姓名} (${i+1}/${results.length})`;
             bar.style.width = `${Math.round((i+1)/results.length*100)}%`;
             await new Promise(r => setTimeout(r, 100));
             const blob = await captureAndSave(`${emp.姓名}.pdf`, true);

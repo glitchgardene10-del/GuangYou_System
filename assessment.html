@@ -3,593 +3,2296 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>光祐居服員考核系統 (v7.1 過濾版)</title>
-    
+    <title>考核評鑑系統</title>
     <script src="auth-guard.js"></script>
     <script type="module" src="config.js"></script>
-
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    
     <style>
         body { font-family: "Microsoft JhengHei", "Heiti TC", sans-serif; }
-        input[type=number]::-webkit-inner-spin-button, 
-        input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
-        .saving-indicator { position: fixed; bottom: 10px; right: 10px; font-size: 12px; color: #64748b; }
+        .metric-card { border: 1px solid #e2e8f0; border-radius: 1rem; background: #fff; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05); }
+        .scrollbar-thin::-webkit-scrollbar { width: 8px; height: 8px; }
+        .scrollbar-thin::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 999px; }
     </style>
-
-    <script type="module">
-        import { doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
-
-        const checkInit = setInterval(() => {
-            if (window.db && window.auth) {
-                clearInterval(checkInit);
-                const DOC_REF = doc(window.db, "caregiver_system", "main_data");
-
-                window.FirebaseAPI = {
-                    subscribe: (onUpdate) => {
-                        let unsubscribeSnapshot = null;
-                        const unsubscribeAuth = window.auth.onAuthStateChanged((user) => {
-                            if (user) {
-                                unsubscribeSnapshot = onSnapshot(DOC_REF, (docSnap) => {
-                                    if (docSnap.exists()) {
-                                        onUpdate(docSnap.data());
-                                    } else {
-                                        const initialData = { staffList: [], allData: {} };
-                                        setDoc(DOC_REF, initialData);
-                                        onUpdate(initialData);
-                                    }
-                                }, (error) => {
-                                    console.warn("讀取資料受限", error);
-                                });
-                            }
-                        });
-                        return () => {
-                            unsubscribeAuth();
-                            if (unsubscribeSnapshot) unsubscribeSnapshot();
-                        };
-                    },
-                    saveAll: async (staffList, allData, userEmail) => {
-                        try {
-                            await setDoc(DOC_REF, { 
-                                staffList, 
-                                allData,
-                                lastModifiedBy: userEmail,
-                                lastModifiedAt: new Date().toISOString()
-                            }, { merge: true });
-                            return true;
-                        } catch (e) {
-                            console.error("儲存失敗:", e);
-                            return false;
-                        }
-                    }
-                };
-            }
-        }, 100);
-    </script>
 </head>
 <body class="bg-slate-50 text-slate-900">
-    <div id="root"></div>
+    <div id="loading" class="min-h-screen flex items-center justify-center text-slate-500 font-bold animate-pulse">正在整理新版考核資料...</div>
 
-    <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
-
-        const Icons = {
-            Users: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
-            Calculator: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><rect width="16" height="20" x="4" y="2" rx="2"/><line x1="8" x2="16" y1="6" y2="6"/><line x1="16" x2="16" y1="14" y2="18"/><path d="M16 10h.01"/><path d="M12 10h.01"/><path d="M8 10h.01"/><path d="M12 14h.01"/><path d="M8 14h.01"/><path d="M12 18h.01"/><path d="M8 18h.01"/></svg>,
-            Plus: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M5 12h14"/><path d="M12 5v14"/></svg>,
-            Trash2: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>,
-            Trophy: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>,
-            AlertCircle: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>,
-            Calendar: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>,
-            Edit: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>,
-            Save: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>,
-            Download: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>,
-            Upload: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>,
-            BarChart: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><line x1="12" x2="12" y1="20" y2="10"/><line x1="18" x2="18" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="16"/></svg>,
-            Cloud: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M17.5 19c0-1.7-1.3-3-3-3h-1.1c-.2-2.3-2.1-4-4-4-2.6 0-4.6 2.1-4.6 4.6 0 .3.1.6.2.9C2.7 17.8 1.5 19.5 1.5 21.5c0 2.5 2 4.5 4.5 4.5h11.5c2.5 0 4.5-2 4.5-4.5s-2-4.5-4.5-4.5z"/></svg>,
-            History: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>,
-            Lock: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>,
-            LogOut: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>,
-            Filter: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
-        };
-
-        const Card = ({ className, children }) => <div className={`rounded-lg border bg-white text-slate-950 shadow-sm ${className}`}>{children}</div>;
-        const CardHeader = ({ className, children }) => <div className={`flex flex-col space-y-1.5 p-6 ${className}`}>{children}</div>;
-        const CardTitle = ({ className, children }) => <h3 className={`text-xl font-semibold leading-none tracking-tight ${className}`}>{children}</h3>;
-        const CardContent = ({ className, children }) => <div className={`p-6 pt-0 ${className}`}>{children}</div>;
-        const Button = ({ className, variant = "default", size = "default", onClick, children, disabled, title, type = "button" }) => {
-            const baseStyles = "inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50";
-            const variants = {
-                default: "bg-blue-600 text-white hover:bg-blue-700",
-                outline: "border border-input bg-background hover:bg-slate-100 hover:text-slate-900",
-                secondary: "bg-slate-600 text-white hover:bg-slate-700",
-                destructive: "bg-red-500 text-white hover:bg-red-600",
-                ghost: "hover:bg-slate-100 hover:text-slate-900"
-            };
-            const sizes = { default: "h-10 px-4 py-2", sm: "h-8 rounded-md px-3 text-xs", icon: "h-10 w-10" };
-            return <button type={type} disabled={disabled} className={`${baseStyles} ${variants[variant] || variants.default} ${sizes[size] || sizes.default} ${className}`} onClick={onClick} title={title}>{children}</button>;
-        };
-        const Input = ({ className, ...props }) => (
-            <input className={`flex h-9 w-full rounded-md border border-slate-200 bg-white px-3 py-1 text-sm ring-offset-white file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${className}`} {...props} />
-        );
-        const Badge = ({ variant = "default", className, children }) => {
-            const variants = {
-                default: "bg-blue-600 text-white",
-                warning: "bg-amber-500 text-white",
-                destructive: "bg-red-500 text-white"
-            };
-            return <div className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold ${variants[variant]} ${className}`}>{children}</div>;
-        };
-        const Modal = ({ isOpen, onClose, title, children }) => {
-            if (!isOpen) return null;
-            return (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-                    <div className="bg-white rounded-lg shadow-lg w-full max-w-md overflow-hidden">
-                        <div className="px-4 py-3 border-b flex justify-between items-center bg-slate-50">
-                            <h3 className="font-bold">{title}</h3>
-                            <button onClick={onClose} className="text-slate-500 hover:text-slate-700">&times;</button>
-                        </div>
-                        <div className="p-4">{children}</div>
+    <div id="app" class="hidden min-h-screen">
+        <header class="sticky top-0 z-20 bg-white border-b border-slate-200 shadow-sm">
+            <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between gap-4">
+                <div class="flex items-center gap-4">
+                    <div class="w-12 h-12 rounded-2xl bg-blue-600 text-white flex items-center justify-center text-2xl shadow-lg">評</div>
+                    <div>
+                        <h1 class="text-2xl font-black text-slate-800">考核評鑑系統</h1>
+                        <p class="text-sm text-slate-500">新版重寫基底：主系統員工名單 + 舊版資料對照 + 本機草稿</p>
+                        <button id="export-json-btn" class="rounded-xl border border-violet-200 bg-white px-4 py-2 text-sm font-bold text-violet-700 hover:bg-violet-50">匯出本期正式紀錄 JSON</button>
+                        <button id="export-csv-btn" class="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50">匯出本期摘要 CSV</button>
                     </div>
                 </div>
-            );
-        };
+                <div class="flex items-center gap-3">
+                    <span id="user-pill" class="hidden md:inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600"></span>
+                    <button id="refresh-btn" class="px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-sm font-bold text-slate-700">重新整理</button>
+                    <button id="back-btn" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-sm font-bold">返回後台</button>
+                </div>
+            </div>
+        </header>
+
+        <main class="max-w-7xl mx-auto px-6 py-6 space-y-6">
+            <section class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="metric-card p-5">
+                    <div class="text-xs font-bold text-slate-400">主系統居服員人數</div>
+                    <div id="metric-employees" class="mt-2 text-3xl font-black text-slate-800">0</div>
+                    <div class="mt-1 text-xs text-slate-500">來源：employees</div>
+                </div>
+                <div class="metric-card p-5">
+                    <div class="text-xs font-bold text-slate-400">舊版考核名單數</div>
+                    <div id="metric-legacy" class="mt-2 text-3xl font-black text-slate-800">0</div>
+                    <div class="mt-1 text-xs text-slate-500">來源：caregiver_system/main_data</div>
+                </div>
+                <div class="metric-card p-5 border-emerald-200 bg-emerald-50/60">
+                    <div class="text-xs font-bold text-emerald-600">已完成對照</div>
+                    <div id="metric-matched" class="mt-2 text-3xl font-black text-emerald-700">0</div>
+                    <div class="mt-1 text-xs text-emerald-600">可延續舊版資料</div>
+                </div>
+                <div class="metric-card p-5 border-amber-200 bg-amber-50/60">
+                    <div class="text-xs font-bold text-amber-600">待整理對照</div>
+                    <div id="metric-unmatched" class="mt-2 text-3xl font-black text-amber-700">0</div>
+                    <div class="mt-1 text-xs text-amber-600">僅計算仍在職未對照者</div>
+                </div>
+            </section>
+
+            <section class="rounded-2xl border border-blue-200 bg-blue-50 px-5 py-4">
+                <div class="flex flex-wrap items-start justify-between gap-4">
+                    <div class="min-w-0">
+                        <div class="font-bold text-blue-800">新版目前的定位</div>
+                        <div class="mt-2 text-sm leading-6 text-blue-700">
+                            這一頁不會覆蓋舊版資料，也不會直接寫回舊版系統。
+                            目前可做三件事：比對主系統居服員與舊版考核名單、批次匯入舊版資料到新版、建立與維護新版正式紀錄。
+                        </div>
+                    </div>
+                    <div class="flex flex-wrap gap-3 shrink-0">
+                        <button id="import-current-btn" class="rounded-xl border border-emerald-200 bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700">匯入本期舊版資料</button>
+                        <button id="import-all-btn" class="rounded-xl border border-blue-200 bg-white px-4 py-2 text-sm font-bold text-blue-700 hover:bg-blue-50">匯入全部舊版資料</button>
+                        <button id="reload-v2-btn" class="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50">重新讀取新版紀錄</button>
+                    </div>
+                </div>
+                <div id="import-status" class="mt-4 rounded-xl border border-blue-100 bg-white/70 px-4 py-3 text-sm text-blue-700">
+                    尚未執行舊版資料匯入。新版正式紀錄只會寫入 `assessment_v2_records`，不會覆蓋舊版。
+                </div>
+            </section>
+
+            <section class="metric-card p-5">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h2 class="text-lg font-black text-slate-800">本期完成率總覽</h2>
+                        <p class="text-sm text-slate-500">依目前年度與期別統計正式紀錄、草稿與待處理狀態，方便直接盤點本期進度。</p>
+                    </div>
+                    <span id="completion-summary-badge" class="inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-700">0%</span>
+                </div>
+                <div id="completion-summary-cards" class="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+                    <div class="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">正在整理完成率資料...</div>
+                </div>
+                <div id="completion-summary-note" class="mt-4 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">尚未計算本期完成率。</div>
+            </section>
+
+            <section class="metric-card p-5">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h2 class="text-lg font-black text-slate-800">本期本機草稿總覽</h2>
+                        <p class="text-sm text-slate-500">這裡只統計目前年度 / 期別在本機工作階段已經先做過的新版草稿。</p>
+                    </div>
+                    <span id="draft-summary-badge" class="inline-flex items-center rounded-full bg-violet-100 px-3 py-1 text-xs font-bold text-violet-700">0 筆草稿</span>
+                </div>
+                <div class="mt-4 grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)] gap-4">
+                    <div id="draft-summary-cards" class="grid grid-cols-1 gap-3">
+                        <div class="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">尚未建立本期草稿。</div>
+                    </div>
+                    <div class="rounded-2xl border border-slate-200 bg-white p-4">
+                        <div class="flex items-center justify-between gap-3">
+                            <div class="text-sm font-black text-slate-800">本期草稿列表</div>
+                            <div id="draft-current-period" class="text-xs font-bold text-slate-500">-</div>
+                        </div>
+                        <div id="draft-list" class="mt-4 flex flex-wrap gap-2 text-sm text-slate-500">尚未建立本期草稿。</div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="metric-card p-5">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h2 class="text-lg font-black text-slate-800">本期正式紀錄總覽</h2>
+                        <p class="text-sm text-slate-500">這裡統計目前年度 / 期別已正式儲存到新版系統的考核紀錄。</p>
+                    </div>
+                    <span id="saved-summary-badge" class="inline-flex items-center rounded-full bg-sky-100 px-3 py-1 text-xs font-bold text-sky-700">0 筆正式紀錄</span>
+                </div>
+                <div class="mt-4 grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)] gap-4">
+                    <div id="saved-summary-cards" class="grid grid-cols-1 gap-3">
+                        <div class="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">尚未儲存本期新版正式紀錄。</div>
+                    </div>
+                    <div class="rounded-2xl border border-slate-200 bg-white p-4">
+                        <div class="flex items-center justify-between gap-3">
+                            <div class="text-sm font-black text-slate-800">本期正式紀錄列表</div>
+                            <div id="saved-current-period" class="text-xs font-bold text-slate-500">-</div>
+                        </div>
+                        <div id="saved-list" class="mt-4 flex flex-wrap gap-2 text-sm text-slate-500">尚未儲存本期新版正式紀錄。</div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="metric-card p-5">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h2 class="text-lg font-black text-slate-800">本期待處理提醒</h2>
+                        <p class="text-sm text-slate-500">快速列出目前這一期仍需處理的新版考核項目。</p>
+                    </div>
+                    <span id="reminder-summary-badge" class="inline-flex items-center rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-700">0 筆提醒</span>
+                </div>
+                <div class="mt-4 grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)] gap-4">
+                    <div id="reminder-summary-cards" class="grid grid-cols-1 gap-3">
+                        <div class="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">目前沒有待處理提醒。</div>
+                    </div>
+                    <div class="rounded-2xl border border-slate-200 bg-white p-4">
+                        <div class="flex items-center justify-between gap-3">
+                            <div class="text-sm font-black text-slate-800">提醒名單</div>
+                            <div id="reminder-current-period" class="text-xs font-bold text-slate-500">-</div>
+                        </div>
+                        <div id="reminder-list" class="mt-4 flex flex-wrap gap-2 text-sm text-slate-500">目前沒有待處理提醒。</div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)] gap-6">
+                <aside class="metric-card flex flex-col overflow-hidden">
+                    <div class="p-4 border-b border-slate-200 bg-white space-y-3">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <div class="text-lg font-black text-slate-800">居服員名單</div>
+                                <div class="text-xs text-slate-500">來自主系統 employees 的在職/離職資料</div>
+                            </div>
+                            <span id="employee-count-badge" class="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">0 人</span>
+                        </div>
+                        <input id="search-input" type="text" placeholder="搜尋姓名或員編" class="w-full rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100">
+                    </div>
+                    <div id="employee-list" class="flex-1 overflow-y-auto scrollbar-thin bg-white"></div>
+                </aside>
+
+                <section class="space-y-6">
+                    <div class="metric-card p-5">
+                        <div class="flex flex-wrap items-end justify-between gap-4">
+                            <div>
+                                <div id="selected-name" class="text-2xl font-black text-slate-800">請先選擇左側居服員</div>
+                                <div id="selected-subtitle" class="mt-1 text-sm text-slate-500">選人後可比對舊版資料，並建立新版草稿。</div>
+                            </div>
+                            <div class="flex flex-wrap gap-3">
+                                <label class="text-sm font-bold text-slate-500">
+                                    年度
+                                    <select id="year-select" class="ml-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-bold text-slate-700">
+                                        <option value="113">113</option>
+                                        <option value="114">114</option>
+                                        <option value="115">115</option>
+                                        <option value="116">116</option>
+                                    </select>
+                                </label>
+                                <label class="text-sm font-bold text-slate-500">
+                                    期別
+                                    <select id="quarter-select" class="ml-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-bold text-slate-700">
+                                        <option value="Q1">Q1</option>
+                                        <option value="Q2">Q2</option>
+                                        <option value="Q3">Q3</option>
+                                        <option value="Q4">Q4</option>
+                                        <option value="ANNUAL">年度</option>
+                                    </select>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <div class="metric-card p-5">
+                            <div class="flex items-center justify-between">
+                                <h2 class="text-lg font-black text-slate-800">主系統員工資料</h2>
+                                <span class="inline-flex items-center rounded-full bg-blue-100 px-3 py-1 text-xs font-bold text-blue-700">主系統</span>
+                            </div>
+                            <div id="employee-detail" class="mt-4 text-sm text-slate-500 leading-7">請先選擇左側居服員。</div>
+                        </div>
+
+                        <div class="metric-card p-5">
+                            <div class="flex items-center justify-between">
+                                <h2 class="text-lg font-black text-slate-800">舊版對照結果</h2>
+                                <span id="legacy-match-badge" class="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">尚未對照</span>
+                            </div>
+                            <div id="legacy-detail" class="mt-4 text-sm text-slate-500 leading-7">請先選擇左側居服員。</div>
+                        </div>
+                    </div>
+
+                    <div class="metric-card p-5">
+                        <div class="flex items-center justify-between gap-3">
+                            <div>
+                                <h2 class="text-lg font-black text-slate-800">舊版本期資料快覽</h2>
+                                <p class="text-sm text-slate-500">根據所選年度與期別，快速查看舊版評分摘要。</p>
+                            </div>
+                            <span id="legacy-record-badge" class="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">尚未讀取</span>
+                        </div>
+                        <div id="legacy-period-summary" class="mt-4 text-sm text-slate-500 leading-7">請先選擇左側居服員。</div>
+                    </div>
+
+                    <div class="metric-card p-5">
+                        <div class="flex items-center justify-between gap-3">
+                            <div>
+                                <h2 class="text-lg font-black text-slate-800">舊版紀錄索引</h2>
+                                <p class="text-sm text-slate-500">列出這位居服員在舊版系統中已有的年度/季度紀錄。</p>
+                            </div>
+                        </div>
+                        <div id="legacy-record-list" class="mt-4 flex flex-wrap gap-2"></div>
+                    </div>
+
+                    <div class="metric-card p-5">
+                        <div class="flex items-center justify-between gap-3">
+                            <div>
+                                <h2 class="text-lg font-black text-slate-800">新版建檔骨架</h2>
+                                <p class="text-sm text-slate-500">顯示這位員工在新版中建檔時，主鍵與銜接建議。</p>
+                            </div>
+                            <span id="new-draft-badge" class="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">尚未準備</span>
+                        </div>
+                        <div id="new-draft-summary" class="mt-4 text-sm text-slate-500 leading-7">請先選擇左側居服員。</div>
+                    </div>
+
+                    <div class="metric-card p-5">
+                        <div class="flex items-center justify-between gap-3">
+                            <div>
+                                <h2 class="text-lg font-black text-slate-800">新版正式紀錄摘要</h2>
+                                <p class="text-sm text-slate-500">直接查看這位員工本期在新版系統裡的正式儲存內容。</p>
+                            </div>
+                            <span id="saved-record-badge" class="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">尚未準備</span>
+                        </div>
+                        <div id="saved-record-detail" class="mt-4 text-sm text-slate-500 leading-7">請先選擇左側居服員。</div>
+                    </div>
+
+                    <div class="metric-card p-5">
+                        <div class="flex items-center justify-between gap-3">
+                            <div>
+                                <h2 class="text-lg font-black text-slate-800">新版考核表單骨架</h2>
+                                <p class="text-sm text-slate-500">可先建立本機草稿、帶入本期舊版資料、再慢慢校對新版欄位。</p>
+                            </div>
+                            <span id="new-form-badge" class="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">尚未準備</span>
+                        </div>
+                        <div id="new-form-summary" class="mt-4 text-sm text-slate-500 leading-7">請先選擇左側居服員。</div>
+                    </div>
+                </section>
+            </section>
+        </main>
+    </div>
+
+    <script type="module">
+        import { collection, deleteDoc, doc, getDoc, getDocs, query, setDoc, where } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
         const QUARTERLY_STRUCTURE = [
-            { id: 'section1', title: '一、主動性 (30%)', weight: 30, maxRawScore: 35, items: [{ id: '1.1', text: '1.1 期限內繳交服務卡、服務紀錄單' }, { id: '1.2', text: '1.2 每月參加團督會議' }, { id: '1.3', text: '1.3 每月參加在職教育訓練' }, { id: '1.4', text: '1.4 積極提升自我專業能力' }, { id: '1.5', text: '1.5 主動且及時向督導反映個案問題' }, { id: '1.6', text: '1.6 回報特殊事件的積極性' }, { id: '1.7', text: '1.7 主動繳交服務相關費用' }] },
-            { id: 'section2', title: '二、工作能力 (40%)', weight: 40, maxRawScore: 25, items: [{ id: '2.1', text: '2.1 服務時間準確，無遲到早退' }, { id: '2.2', text: '2.2 APP定位狀況良好' }, { id: '2.3', text: '2.3 工作內容執行正確' }, { id: '2.4', text: '2.4 照顧技巧熟練度與正確性' }, { id: '2.5', text: '2.5 意外事件應變能力' }] },
-            { id: 'section3', title: '三、紀錄能力 (15%)', weight: 15, maxRawScore: 15, items: [{ id: '3.1', text: '3.1 服務卡書寫清晰完整' }, { id: '3.2', text: '3.2 紀錄單書寫具體詳實' }, { id: '3.3', text: '3.3 修正錯誤表單時效性' }] },
-            { id: 'section4', title: '四、工作態度 (15%)', weight: 15, maxRawScore: 40, items: [{ id: '4.1', text: '4.1 服務態度佳，互動良好' }, { id: '4.2', text: '4.2 謹守工作倫理與隱私' }, { id: '4.3', text: '4.3 與機構同事保持合作' }, { id: '4.4', text: '4.4 服從督導及機構指導' }, { id: '4.5', text: '4.5 維護機構形象，言行得體' }, { id: '4.6', text: '4.6 情緒管理適當' }, { id: '4.7', text: '4.7 服裝儀容端正' }, { id: '4.8', text: '4.8 配合公司排班規定' }] }
+            {
+                id: 'section1',
+                title: '服務品質與專業態度 (30%)',
+                weight: 30,
+                maxRawScore: 35,
+                items: [
+                    { id: '1.1', text: '服務態度與禮貌應對' },
+                    { id: '1.2', text: '個案互動與觀察敏感度' },
+                    { id: '1.3', text: '紀錄完整度與回報即時性' },
+                    { id: '1.4', text: '排班配合度與出勤穩定性' },
+                    { id: '1.5', text: '工作責任感與交辦事項執行' },
+                    { id: '1.6', text: '遵守流程與異常處理能力' },
+                    { id: '1.7', text: '團隊合作與溝通表現' }
+                ]
+            },
+            {
+                id: 'section2',
+                title: '行政配合與系統使用 (40%)',
+                weight: 40,
+                maxRawScore: 25,
+                items: [
+                    { id: '2.1', text: '文件回收與行政配合' },
+                    { id: '2.2', text: 'APP / 系統操作熟悉度' },
+                    { id: '2.3', text: '表單填寫正確性' },
+                    { id: '2.4', text: '交辦事項回覆速度' },
+                    { id: '2.5', text: '教育訓練配合程度' }
+                ]
+            },
+            {
+                id: 'section3',
+                title: '專業成長與學習 (15%)',
+                weight: 15,
+                maxRawScore: 15,
+                items: [
+                    { id: '3.1', text: '自主學習與成長意願' },
+                    { id: '3.2', text: '參與訓練與吸收能力' },
+                    { id: '3.3', text: '對制度調整的理解與配合' }
+                ]
+            },
+            {
+                id: 'section4',
+                title: '工作紀律與風險控管 (15%)',
+                weight: 15,
+                maxRawScore: 40,
+                items: [
+                    { id: '4.1', text: '遲到早退與出勤紀律' },
+                    { id: '4.2', text: '客訴或異常事件處理' },
+                    { id: '4.3', text: '稽核缺失與改善情況' },
+                    { id: '4.4', text: 'GPS 或定位異常' },
+                    { id: '4.5', text: '忘刷與補登狀況' },
+                    { id: '4.6', text: '安全與風險意識' },
+                    { id: '4.7', text: '督導回饋紀錄' },
+                    { id: '4.8', text: '其他特殊情況' }
+                ]
+            }
         ];
 
         const ANNUAL_STRUCTURE = [
-            { id: 'annual_prof', title: '專業與工作態度考核 (48%)', items: [{ id: 'a.1', text: '1. 具備專業知識與照護技巧，錯誤率低', max: 8 }, { id: 'a.2', text: '2. 工作效率高，時效內完成業務', max: 8 }, { id: 'a.3', text: '3. 配合度高，支援交辦事項', max: 8 }, { id: 'a.4', text: '4. 盡心服務，不抱怨，遵守保密隱私', max: 8 }, { id: 'a.5', text: '5. 提出建設性建議，非無故抱怨', max: 8 }, { id: 'a.6', text: '6. 工作負責勤懇，確實遵守公司規定', max: 8 }] },
-            { id: 'annual_loyalty', title: '向心力與個人素養考核 (37%)', items: [{ id: 'b.1', text: '1. 謙遜有禮，落實職場倫理', max: 7 }, { id: 'b.2', text: '2. 對機構向心力佳，維護信譽', max: 7 }, { id: 'b.3', text: '3. 樂於分享工作技巧，不藏私', max: 8 }, { id: 'b.4', text: '4. 勇於承擔錯誤並修正，不說謊', max: 8 }, { id: 'b.5', text: '5. 以機構最大利益為考量，無違法風險', max: 7 }] }
+            {
+                id: 'annual_prof',
+                title: '專業表現與工作成效 (48%)',
+                items: [
+                    { id: 'a.1', text: '服務品質穩定度', max: 8 },
+                    { id: 'a.2', text: '執行力與配合度', max: 8 },
+                    { id: 'a.3', text: '專業判斷與處理能力', max: 8 },
+                    { id: 'a.4', text: '溝通協調與團隊合作', max: 8 },
+                    { id: 'a.5', text: '文件與系統品質', max: 8 },
+                    { id: 'a.6', text: '整體工作成效', max: 8 }
+                ]
+            },
+            {
+                id: 'annual_loyalty',
+                title: '忠誠度與制度配合 (37%)',
+                items: [
+                    { id: 'b.1', text: '公司制度認同與落實', max: 7 },
+                    { id: 'b.2', text: '行政流程配合度', max: 7 },
+                    { id: 'b.3', text: '教育訓練與改善意願', max: 8 },
+                    { id: 'b.4', text: '穩定度與留任意願', max: 8 },
+                    { id: 'b.5', text: '整體年度綜合表現', max: 7 }
+                ]
+            }
         ];
 
-        const getRecordKey = (sId, year, q) => `${sId}_${year}_${q}`;
+        const ASSESSMENT_DRAFT_STORAGE_KEY = 'assessment_rewrite_drafts_v1';
+        const ASSESSMENT_V2_COLLECTION = 'assessment_v2_records';
 
-        const calculateQuarterly = (record) => {
-            if (!record) return { total: 0, details: [], bonus: 0, penalty: 0 };
+        const state = {
+            user: null,
+            employees: [],
+            legacyStaffList: [],
+            legacyAllData: {},
+            selectedEmployeeId: null,
+            currentYear: String(Math.max(113, new Date().getFullYear() - 1911)),
+            currentQuarter: 'Q1',
+            searchText: '',
+            localDrafts: {},
+            savedRecords: {}
+        };
+
+        const dom = {};
+
+        function getDefaultHome(role) {
+            return ['manager', 'super_admin'].includes(role) ? 'accounting_portal.html' : 'admin_portal.html';
+        }
+
+        function escapeHtml(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function getRecordKey(staffId, year, quarter) {
+            return `${staffId}_${year}_${quarter}`;
+        }
+
+        function deepClone(value) {
+            return JSON.parse(JSON.stringify(value ?? null));
+        }
+
+        function getNewAssessmentRecordKey(employeeId, year, quarter) {
+            return `${employeeId}_${year}_${quarter}`;
+        }
+
+        function normalizeText(value) {
+            return String(value || '').trim();
+        }
+
+        function loadLocalDrafts() {
+            try {
+                const raw = sessionStorage.getItem(ASSESSMENT_DRAFT_STORAGE_KEY);
+                state.localDrafts = raw ? JSON.parse(raw) : {};
+            } catch (error) {
+                console.warn('assessment drafts parse failed', error);
+                state.localDrafts = {};
+            }
+        }
+
+        function persistLocalDrafts() {
+            sessionStorage.setItem(ASSESSMENT_DRAFT_STORAGE_KEY, JSON.stringify(state.localDrafts));
+        }
+
+        function getAssessmentDraftKey(employeeId, year, quarter) {
+            return `${employeeId}_${year}_${quarter}`;
+        }
+
+        function buildEmptyAssessmentDraft(quarter) {
+            if (quarter === 'ANNUAL') {
+                return {
+                    type: 'annual',
+                    note: '',
+                    scores: {},
+                    bonus: {
+                        late: '',
+                        absent: '',
+                        leave: '',
+                        forgot: '',
+                        gps: '',
+                        commendation1: '',
+                        commendation2: '',
+                        commendation3: '',
+                        warning: '',
+                        minor: '',
+                        major: ''
+                    }
+                };
+            }
+
+            return {
+                type: 'quarterly',
+                note: '',
+                manualScore: '',
+                isNewHire: false,
+                scores: {},
+                bonus: {
+                    newStaff: '',
+                    newCase: '',
+                    innovation: '',
+                    auditError: '',
+                    complaint: ''
+                }
+            };
+        }
+
+        function getCurrentDraft(employeeId, year, quarter) {
+            const key = getAssessmentDraftKey(employeeId, year, quarter);
+            if (!state.localDrafts[key]) {
+                state.localDrafts[key] = buildEmptyAssessmentDraft(quarter);
+                persistLocalDrafts();
+            }
+            return state.localDrafts[key];
+        }
+
+        function clearCurrentDraft(employeeId, year, quarter) {
+            delete state.localDrafts[getAssessmentDraftKey(employeeId, year, quarter)];
+            persistLocalDrafts();
+        }
+
+        function hasDraftContent(draft) {
+            if (!draft) return false;
+            if (normalizeText(draft.note)) return true;
+            if (draft.type === 'quarterly') {
+                if (draft.isNewHire) return true;
+                if (normalizeText(draft.manualScore)) return true;
+            }
+            return Object.values(draft.scores || {}).some((item) =>
+                Object.values(item || {}).some((value) => normalizeText(value))
+            ) || Object.values(draft.bonus || {}).some((value) => normalizeText(value));
+        }
+
+        function getAssessmentDraftStats(draft, quarter) {
+            const isAnnual = quarter === 'ANNUAL';
+            const structure = isAnnual ? ANNUAL_STRUCTURE : QUARTERLY_STRUCTURE;
+            const scoreItems = structure.flatMap((section) => section.items || []);
+            const scoreTotal = scoreItems.length * 3;
+            let scoreFilled = 0;
+
+            scoreItems.forEach((item) => {
+                const value = draft?.scores?.[item.id] || {};
+                ['self', 'sup', 'dir'].forEach((role) => {
+                    if (normalizeText(value?.[role])) scoreFilled += 1;
+                });
+            });
+
+            const bonusKeys = Object.keys(draft?.bonus || {});
+            const bonusTotal = bonusKeys.length;
+            const bonusFilled = bonusKeys.filter((key) => normalizeText(draft?.bonus?.[key])).length;
+            const noteFilled = normalizeText(draft?.note) ? 1 : 0;
+            const total = scoreTotal + bonusTotal + 1;
+            const filled = scoreFilled + bonusFilled + noteFilled;
+            const percent = total ? Math.round((filled / total) * 100) : 0;
+            const missing = [];
+
+            if (scoreFilled < scoreTotal) missing.push(`評分欄位缺 ${scoreTotal - scoreFilled} 格`);
+            if (bonusFilled < bonusTotal) missing.push(`加扣分欄位缺 ${bonusTotal - bonusFilled} 格`);
+            if (!noteFilled) missing.push('尚未填寫備註');
+
+            const status = !hasDraftContent(draft)
+                ? '未開始'
+                : percent >= 100
+                    ? '已完成'
+                    : '進行中';
+
+            return {
+                scoreFilled,
+                scoreTotal,
+                bonusFilled,
+                bonusTotal,
+                noteFilled: Boolean(noteFilled),
+                filled,
+                total,
+                percent,
+                missing,
+                status
+            };
+        }
+
+        function buildDraftFromLegacyRecord(record, quarter) {
+            const draft = buildEmptyAssessmentDraft(quarter);
+            if (!record) return draft;
+            draft.note = record.note || '';
+            if (quarter === 'ANNUAL') {
+                draft.scores = JSON.parse(JSON.stringify(record.scores || {}));
+                draft.bonus = { ...draft.bonus, ...(record.bonus || {}) };
+                return draft;
+            }
+            draft.manualScore = record.manualScore ?? '';
+            draft.isNewHire = Boolean(record.isNewHire);
+            draft.scores = JSON.parse(JSON.stringify(record.scores || {}));
+            draft.bonus = { ...draft.bonus, ...(record.bonus || {}) };
+            return draft;
+        }
+
+        function buildDraftFromSavedRecord(savedRecord, quarter) {
+            const draft = buildEmptyAssessmentDraft(quarter);
+            if (!savedRecord?.draft) return draft;
+            const source = savedRecord.draft;
+            draft.note = source.note || '';
+            if (quarter === 'ANNUAL') {
+                draft.scores = deepClone(source.scores || {});
+                draft.bonus = { ...draft.bonus, ...(source.bonus || {}) };
+                return draft;
+            }
+            draft.manualScore = source.manualScore ?? '';
+            draft.isNewHire = Boolean(source.isNewHire);
+            draft.scores = deepClone(source.scores || {});
+            draft.bonus = { ...draft.bonus, ...(source.bonus || {}) };
+            return draft;
+        }
+
+        function setDraftField(employeeId, year, quarter, updater) {
+            const draft = getCurrentDraft(employeeId, year, quarter);
+            updater(draft);
+            persistLocalDrafts();
+        }
+
+        function getSavedAssessmentRecord(employeeId, year, quarter) {
+            return state.savedRecords[getNewAssessmentRecordKey(employeeId, year, quarter)] || null;
+        }
+
+        function getLegacyAssessmentRecord(legacyStaffId, year, quarter) {
+            if (!legacyStaffId) return null;
+            return state.legacyAllData[getRecordKey(legacyStaffId, year, quarter)] || null;
+        }
+
+        function getAnnualComputationData(employeeId, legacyStaffId, year, currentAnnualRecord = null) {
+            const merged = {};
+            ['Q1', 'Q2', 'Q3', 'Q4', 'ANNUAL'].forEach((quarter) => {
+                const key = getNewAssessmentRecordKey(employeeId, year, quarter);
+                const saved = state.savedRecords[key];
+                if (saved?.draft) {
+                    merged[key] = deepClone(saved.draft);
+                } else {
+                    const legacyRecord = getLegacyAssessmentRecord(legacyStaffId, year, quarter);
+                    if (legacyRecord) {
+                        merged[key] = deepClone(legacyRecord);
+                    }
+                }
+            });
+            if (currentAnnualRecord) {
+                merged[getNewAssessmentRecordKey(employeeId, year, 'ANNUAL')] = deepClone(currentAnnualRecord);
+            }
+            return merged;
+        }
+
+        function buildAssessmentSavedSummary(employeeId, legacyStaffId, year, quarter, draft) {
+            if (quarter === 'ANNUAL') {
+                const annual = calculateAnnual(employeeId, year, getAnnualComputationData(employeeId, legacyStaffId, year, draft));
+                return {
+                    type: 'annual',
+                    final: annual.final,
+                    qAvg: annual.qAvg,
+                    annualFromQuarter: annual.annualFromQuarter,
+                    annualAssessmentScore: annual.annualAssessmentScore,
+                    attDeduct: annual.attDeduct,
+                    rewardsScore: annual.rewardsScore,
+                    hasAnnualRecord: annual.hasAnnualRecord
+                };
+            }
+
+            const quarterly = calculateQuarterly(draft);
+            return {
+                type: 'quarterly',
+                total: quarterly.total,
+                isManual: quarterly.isManual,
+                isNewHire: quarterly.isNewHire,
+                details: quarterly.details,
+                bonusData: quarterly.bonusData
+            };
+        }
+
+        function buildAssessmentRecordPayload(employee, legacyMatch, draft) {
+            return buildAssessmentRecordPayloadForPeriod(employee, legacyMatch, draft, state.currentYear, state.currentQuarter);
+        }
+
+        function buildAssessmentRecordPayloadForPeriod(employee, legacyMatch, draft, year, quarter) {
+            const recordKey = getNewAssessmentRecordKey(employee.id, year, quarter);
+            const legacyRecordKey = legacyMatch ? getRecordKey(legacyMatch.id, year, quarter) : null;
+            const summary = buildAssessmentSavedSummary(employee.id, legacyMatch?.id || '', year, quarter, draft);
+            const stats = getAssessmentDraftStats(draft, quarter);
+
+            return {
+                recordKey,
+                employeeId: employee.id,
+                employeeCode: employee.code || '',
+                employeeName: employee.name || '',
+                role: employee.role || 'caregiver',
+                year,
+                quarter,
+                legacyStaffId: legacyMatch?.id || '',
+                legacyRecordKey: legacyRecordKey || '',
+                draft: deepClone(draft),
+                summary,
+                draftStats: {
+                    status: stats.status,
+                    percent: stats.percent,
+                    scoreFilled: stats.scoreFilled,
+                    scoreTotal: stats.scoreTotal,
+                    bonusFilled: stats.bonusFilled,
+                    bonusTotal: stats.bonusTotal,
+                    noteFilled: stats.noteFilled
+                },
+                meta: {
+                    source: 'assessment_rewrite_v1',
+                    savedAt: new Date().toISOString(),
+                    savedBy: {
+                        uid: state.user?.uid || '',
+                        name: state.user?.name || '',
+                        role: state.user?.role || ''
+                    }
+                }
+            };
+        }
+
+        async function saveCurrentAssessmentRecord(employee, legacyMatch) {
+            const draft = getCurrentDraft(employee.id, state.currentYear, state.currentQuarter);
+            if (!hasDraftContent(draft)) {
+                alert('本期草稿尚未填寫內容，無法儲存新版紀錄。');
+                return false;
+            }
+
+            const payload = buildAssessmentRecordPayload(employee, legacyMatch, draft);
+            await setDoc(doc(window.db, ASSESSMENT_V2_COLLECTION, payload.recordKey), payload);
+            state.savedRecords[payload.recordKey] = payload;
+            return true;
+        }
+
+        async function deleteCurrentAssessmentRecord(employeeId, year, quarter) {
+            const key = getNewAssessmentRecordKey(employeeId, year, quarter);
+            await deleteDoc(doc(window.db, ASSESSMENT_V2_COLLECTION, key));
+            delete state.savedRecords[key];
+        }
+
+        function loadSavedRecordIntoDraft(employeeId, year, quarter) {
+            const savedRecord = getSavedAssessmentRecord(employeeId, year, quarter);
+            if (!savedRecord) return false;
+            state.localDrafts[getAssessmentDraftKey(employeeId, year, quarter)] = buildDraftFromSavedRecord(savedRecord, quarter);
+            persistLocalDrafts();
+            return true;
+        }
+
+        function parseLegacyPeriodToken(recordKey, legacyStaffId) {
+            const token = recordKey.replace(`${legacyStaffId}_`, '');
+            const parts = token.split('_');
+            return {
+                year: parts[0] || '',
+                quarter: parts.slice(1).join('_') || ''
+            };
+        }
+
+        function getCurrentPeriodImportableEntries() {
+            return state.employees
+                .map((employee) => {
+                    const legacyMatch = buildLegacyMatch(employee);
+                    if (!legacyMatch) return null;
+                    const legacyRecord = getLegacyAssessmentRecord(legacyMatch.id, state.currentYear, state.currentQuarter);
+                    if (!legacyRecord) return null;
+                    const savedExists = Boolean(getSavedAssessmentRecord(employee.id, state.currentYear, state.currentQuarter));
+                    return { employee, legacyMatch, legacyRecord, year: state.currentYear, quarter: state.currentQuarter, savedExists };
+                })
+                .filter(Boolean);
+        }
+
+        function getAllImportableLegacyEntries() {
+            return state.employees.flatMap((employee) => {
+                const legacyMatch = buildLegacyMatch(employee);
+                if (!legacyMatch) return [];
+                return legacyMatch.recordKeys.map((recordKey) => {
+                    const { year, quarter } = parseLegacyPeriodToken(recordKey, legacyMatch.id);
+                    const legacyRecord = state.legacyAllData[recordKey];
+                    const savedExists = Boolean(getSavedAssessmentRecord(employee.id, year, quarter));
+                    return { employee, legacyMatch, legacyRecord, year, quarter, savedExists };
+                });
+            });
+        }
+
+        async function importLegacyEntries(entries, overwrite = false) {
+            const candidates = overwrite ? entries : entries.filter((entry) => !entry.savedExists);
+            let imported = 0;
+            let skipped = entries.length - candidates.length;
+            const failed = [];
+
+            for (const entry of candidates) {
+                try {
+                    const draft = buildDraftFromLegacyRecord(entry.legacyRecord, entry.quarter);
+                    const payload = buildAssessmentRecordPayloadForPeriod(entry.employee, entry.legacyMatch, draft, entry.year, entry.quarter);
+                    await setDoc(doc(window.db, ASSESSMENT_V2_COLLECTION, payload.recordKey), payload);
+                    state.savedRecords[payload.recordKey] = payload;
+                    imported += 1;
+                } catch (error) {
+                    failed.push(`${entry.employee.name} ${entry.year}/${entry.quarter}`);
+                    console.error('import legacy entry failed', entry, error);
+                }
+            }
+
+            return { total: entries.length, imported, skipped, failed };
+        }
+
+        function buildLegacyMatch(employee) {
+            const byExactName = state.legacyStaffList.find((staff) => normalizeText(staff.name) === normalizeText(employee.name));
+            if (!byExactName) return null;
+            const recordKeys = Object.keys(state.legacyAllData).filter((key) => key.startsWith(`${byExactName.id}_`));
+            return { ...byExactName, recordKeys };
+        }
+
+        function isIgnoredUnmatchedEmployee(employee, legacyMatch = null) {
+            return !legacyMatch && Boolean(employee?.resignDate);
+        }
+
+        function getFilteredEmployees() {
+            const keyword = normalizeText(state.searchText).toLowerCase();
+            if (!keyword) return state.employees;
+            return state.employees.filter((employee) => {
+                const nameMatched = normalizeText(employee.name).toLowerCase().includes(keyword);
+                const codeMatched = normalizeText(employee.code).toLowerCase().includes(keyword);
+                return nameMatched || codeMatched;
+            });
+        }
+
+        function getCurrentPeriodDraftEntries() {
+            return state.employees
+                .map((employee) => {
+                    const draft = state.localDrafts[getAssessmentDraftKey(employee.id, state.currentYear, state.currentQuarter)];
+                    if (!draft || !hasDraftContent(draft)) return null;
+                    const legacyMatch = buildLegacyMatch(employee);
+                    return {
+                        employee,
+                        draft,
+                        legacyMatch,
+                        ignored: isIgnoredUnmatchedEmployee(employee, legacyMatch)
+                    };
+                })
+                .filter(Boolean)
+                .sort((a, b) => normalizeText(a.employee.name).localeCompare(normalizeText(b.employee.name), 'zh-Hant'));
+        }
+
+        function getCurrentPeriodSavedEntries() {
+            return state.employees
+                .map((employee) => {
+                    const savedRecord = getSavedAssessmentRecord(employee.id, state.currentYear, state.currentQuarter);
+                    if (!savedRecord) return null;
+                    const legacyMatch = buildLegacyMatch(employee);
+                    return {
+                        employee,
+                        savedRecord,
+                        legacyMatch,
+                        ignored: isIgnoredUnmatchedEmployee(employee, legacyMatch)
+                    };
+                })
+                .filter(Boolean)
+                .sort((a, b) => normalizeText(a.employee.name).localeCompare(normalizeText(b.employee.name), 'zh-Hant'));
+        }
+
+        function getCurrentPeriodReminderEntries() {
+            return state.employees
+                .map((employee) => {
+                    const legacyMatch = buildLegacyMatch(employee);
+                    const ignored = isIgnoredUnmatchedEmployee(employee, legacyMatch);
+                    if (ignored) return null;
+
+                    const legacyRecord = legacyMatch ? getLegacyAssessmentRecord(legacyMatch.id, state.currentYear, state.currentQuarter) : null;
+                    const savedRecord = getSavedAssessmentRecord(employee.id, state.currentYear, state.currentQuarter);
+                    const draft = state.localDrafts[getAssessmentDraftKey(employee.id, state.currentYear, state.currentQuarter)];
+                    const draftStats = draft && hasDraftContent(draft) ? getAssessmentDraftStats(draft, state.currentQuarter) : null;
+                    const reminders = [];
+
+                    if (legacyRecord && !savedRecord) {
+                        reminders.push('本期舊版資料尚未匯入新版');
+                    }
+                    if (draftStats && !savedRecord) {
+                        reminders.push('已有本機草稿但尚未正式儲存');
+                    }
+                    if (draftStats && draftStats.status !== '已完成') {
+                        reminders.push(`草稿尚未完成（${draftStats.percent}%）`);
+                    }
+
+                    if (reminders.length === 0) return null;
+
+                    return {
+                        employee,
+                        legacyMatch,
+                        legacyRecord,
+                        savedRecord,
+                        draftStats,
+                        reminders
+                    };
+                })
+                .filter(Boolean)
+                .sort((a, b) => normalizeText(a.employee.name).localeCompare(normalizeText(b.employee.name), 'zh-Hant'));
+        }
+
+        function getCurrentPeriodScopedEmployees() {
+            return state.employees.filter((employee) => {
+                const legacyMatch = buildLegacyMatch(employee);
+                return !isIgnoredUnmatchedEmployee(employee, legacyMatch);
+            });
+        }
+
+        function buildCurrentPeriodCompletionOverview() {
+            const scopedEmployees = getCurrentPeriodScopedEmployees();
+            const savedEntries = getCurrentPeriodSavedEntries();
+            const reminderEntries = getCurrentPeriodReminderEntries();
+            const draftEntries = getCurrentPeriodDraftEntries().filter((entry) => !entry.ignored);
+            const completedDrafts = draftEntries.filter((entry) => getAssessmentDraftStats(entry.draft, state.currentQuarter).status === '已完成').length;
+            const inProgressDrafts = draftEntries.filter((entry) => getAssessmentDraftStats(entry.draft, state.currentQuarter).status === '進行中').length;
+            const legacyImportable = getCurrentPeriodImportableEntries().length;
+            const total = scopedEmployees.length;
+            const savedCount = savedEntries.length;
+            const reminderCount = reminderEntries.length;
+            const completionPercent = total > 0 ? Math.round((savedCount / total) * 100) : 0;
+
+            return {
+                total,
+                savedCount,
+                reminderCount,
+                completedDrafts,
+                inProgressDrafts,
+                legacyImportable,
+                completionPercent,
+                pendingCount: Math.max(total - savedCount, 0)
+            };
+        }
+
+        function buildCurrentPeriodExportRows() {
+            return getCurrentPeriodSavedEntries().map((entry) => {
+                const summary = entry.savedRecord?.summary || {};
+                const draftStats = entry.savedRecord?.draftStats || {};
+                return {
+                    employeeId: entry.employee.id,
+                    employeeCode: entry.employee.code || '',
+                    employeeName: entry.employee.name || '',
+                    year: state.currentYear,
+                    quarter: state.currentQuarter,
+                    matchedLegacy: entry.legacyMatch ? 'Y' : 'N',
+                    legacyStaffId: entry.legacyMatch?.id || '',
+                    recordKey: entry.savedRecord?.recordKey || '',
+                    legacyRecordKey: entry.savedRecord?.legacyRecordKey || '',
+                    summaryType: summary.type || '',
+                    quarterlyTotal: summary.type === 'quarterly' ? (summary.total || '') : '',
+                    annualFinal: summary.type === 'annual' ? (summary.final || '') : '',
+                    annualQuarterAverage: summary.type === 'annual' ? (summary.qAvg || '') : '',
+                    completionPercent: draftStats.percent ?? '',
+                    draftStatus: draftStats.status || '',
+                    savedAt: entry.savedRecord?.meta?.savedAt || '',
+                    savedBy: entry.savedRecord?.meta?.savedBy?.name || ''
+                };
+            });
+        }
+
+        function downloadAssessmentFile(filename, content, mimeType) {
+            const blob = new Blob([content], { type: mimeType });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(url);
+        }
+
+        function exportCurrentPeriodSavedJson() {
+            const rows = buildCurrentPeriodExportRows();
+            const payload = {
+                year: state.currentYear,
+                quarter: state.currentQuarter,
+                exportedAt: new Date().toISOString(),
+                total: rows.length,
+                records: getCurrentPeriodSavedEntries().map((entry) => entry.savedRecord),
+                summaryRows: rows
+            };
+            const filename = `assessment_v2_${state.currentYear}_${state.currentQuarter}.json`;
+            downloadAssessmentFile(filename, JSON.stringify(payload, null, 2), 'application/json;charset=utf-8');
+            renderImportStatus(`已匯出 ${rows.length} 筆新版正式紀錄 JSON。`, 'success');
+        }
+
+        function exportCurrentPeriodSavedCsv() {
+            const rows = buildCurrentPeriodExportRows();
+            const headers = [
+                'employeeId',
+                'employeeCode',
+                'employeeName',
+                'year',
+                'quarter',
+                'matchedLegacy',
+                'legacyStaffId',
+                'recordKey',
+                'legacyRecordKey',
+                'summaryType',
+                'quarterlyTotal',
+                'annualFinal',
+                'annualQuarterAverage',
+                'completionPercent',
+                'draftStatus',
+                'savedAt',
+                'savedBy'
+            ];
+            const escapeCsv = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+            const csv = [
+                headers.join(','),
+                ...rows.map((row) => headers.map((header) => escapeCsv(row[header])).join(','))
+            ].join('\r\n');
+            const filename = `assessment_v2_${state.currentYear}_${state.currentQuarter}_summary.csv`;
+            downloadAssessmentFile(filename, '\uFEFF' + csv, 'text/csv;charset=utf-8');
+            renderImportStatus(`已匯出 ${rows.length} 筆新版正式紀錄摘要 CSV。`, 'success');
+        }
+
+        function calculateQuarterly(record) {
+            if (!record) return { total: '0.00', details: [], bonusData: {}, isNewHire: false, isManual: false };
             if (record.manualScore !== undefined && record.manualScore !== '' && record.manualScore !== null) {
-                return { total: parseFloat(record.manualScore).toFixed(2), details: [{ title: '歷史成績直接補登', raw: '-', weighted: parseFloat(record.manualScore).toFixed(2) }], bonusData: {}, isNewHire: record.isNewHire, isManual: true };
+                return {
+                    total: parseFloat(record.manualScore || 0).toFixed(2),
+                    details: [{ title: '手動總分', raw: '-', weighted: parseFloat(record.manualScore || 0).toFixed(2) }],
+                    bonusData: {},
+                    isNewHire: Boolean(record.isNewHire),
+                    isManual: true
+                };
             }
             const scores = record.scores || {};
             const bonusData = record.bonus || {};
-            let totalWeighted = 0, details = [];
-            QUARTERLY_STRUCTURE.forEach(section => {
+            let totalWeighted = 0;
+            const details = [];
+            QUARTERLY_STRUCTURE.forEach((section) => {
                 let rawSum = 0;
-                section.items.forEach(item => {
+                section.items.forEach((item) => {
                     const s = scores[item.id] || {};
-                    rawSum += ((s.self||0)*0.05) + ((s.sup||0)*0.60) + ((s.dir||0)*0.35);
+                    rawSum += ((Number(s.self) || 0) * 0.05) + ((Number(s.sup) || 0) * 0.60) + ((Number(s.dir) || 0) * 0.35);
                 });
                 const weighted = (rawSum / section.maxRawScore) * section.weight;
                 totalWeighted += weighted;
                 details.push({ title: section.title, raw: rawSum.toFixed(2), weighted: weighted.toFixed(2) });
             });
-            const bNewStaff = Math.min((bonusData.newStaff||0)*1, 2);
-            const bNewCase = Math.min((bonusData.newCase||0)*0.5, 2);
-            const bInnovation = Math.min((bonusData.innovation||0), 2);
-            const pAudit = (bonusData.auditError||0)*3;
-            const pComplaint = (bonusData.complaint||0)*2;
-            const final = totalWeighted + bNewStaff + bNewCase + bInnovation - pAudit - pComplaint;
-            return { total: final.toFixed(2), details, bonusData, isNewHire: record.isNewHire, isManual: false };
-        };
+            const final = totalWeighted
+                + Math.min((Number(bonusData.newStaff) || 0) * 1, 2)
+                + Math.min((Number(bonusData.newCase) || 0) * 0.5, 2)
+                + Math.min(Number(bonusData.innovation) || 0, 2)
+                - ((Number(bonusData.auditError) || 0) * 3)
+                - ((Number(bonusData.complaint) || 0) * 2);
+            return {
+                total: final.toFixed(2),
+                details,
+                bonusData,
+                isNewHire: Boolean(record.isNewHire),
+                isManual: false
+            };
+        }
 
-        const calculateAnnual = (sId, year, allData) => {
-            let qSum = 0, qCount = 0, qDetails = [];
-            ['Q1', 'Q2', 'Q3', 'Q4'].forEach(q => {
-                const key = getRecordKey(sId, year, q);
-                const record = allData[key];
+        function calculateAnnual(staffId, year, allData) {
+            let qSum = 0;
+            let qCount = 0;
+            const qDetails = [];
+            ['Q1', 'Q2', 'Q3', 'Q4'].forEach((quarter) => {
+                const record = allData[getRecordKey(staffId, year, quarter)];
                 if (record && !record.isNewHire) {
-                    const res = calculateQuarterly(record);
-                    const val = parseFloat(res.total);
-                    if (!isNaN(val) && val > 0) { qSum += val; qCount++; qDetails.push({ q, val }); }
-                } else if (record && record.isNewHire) { qDetails.push({ q, val: '新進(不計)' }); } else { qDetails.push({ q, val: '-' }); }
+                    const result = calculateQuarterly(record);
+                    const value = parseFloat(result.total);
+                    if (!Number.isNaN(value) && value > 0) {
+                        qSum += value;
+                        qCount += 1;
+                        qDetails.push({ quarter, value: value.toFixed(2) });
+                        return;
+                    }
+                }
+                qDetails.push({ quarter, value: record?.isNewHire ? '新進不列入' : '-' });
             });
+
             const qAvg = qCount > 0 ? (qSum / qCount) : 0;
             const annualFromQuarter = qAvg * 0.15;
-            
-            const annualKey = getRecordKey(sId, year, 'ANNUAL');
-            const record = allData[annualKey] || {};
-            const scores = record.scores || {};
-            const bonus = record.bonus || {};
-            let totalMax = 0, sumSelf = 0, sumSup = 0, sumDir = 0;
-            ANNUAL_STRUCTURE.forEach(sec => {
-                sec.items.forEach(item => {
+            const annualRecord = allData[getRecordKey(staffId, year, 'ANNUAL')] || {};
+            const scores = annualRecord.scores || {};
+            const bonus = annualRecord.bonus || {};
+
+            let totalMax = 0;
+            let sumSelf = 0;
+            let sumSup = 0;
+            let sumDir = 0;
+            ANNUAL_STRUCTURE.forEach((section) => {
+                section.items.forEach((item) => {
                     totalMax += item.max;
                     const s = scores[item.id] || {};
-                    sumSelf += parseFloat(s.self || 0);
-                    sumSup += parseFloat(s.sup || 0);
-                    sumDir += parseFloat(s.dir || 0);
+                    sumSelf += Number(s.self) || 0;
+                    sumSup += Number(s.sup) || 0;
+                    sumDir += Number(s.dir) || 0;
                 });
             });
+
             const scoreSelf = totalMax > 0 ? (sumSelf / totalMax) * 10 : 0;
             const scoreSup = totalMax > 0 ? (sumSup / totalMax) * 50 : 0;
             const scoreDir = totalMax > 0 ? (sumDir / totalMax) * 25 : 0;
             const annualAssessmentScore = scoreSelf + scoreSup + scoreDir;
-            
-            const lateCount = (bonus.late || 0);
-            const forgotCount = (bonus.forgot || 0);
-            const gpsCount = (bonus.gps || 0);
-            
-            const attDeduct = 
-                (Math.floor(lateCount / 3) * 0.5) +       
-                ((bonus.absent || 0) * 1) +               
-                ((bonus.leave || 0) * 0.2) +              
-                (Math.floor(forgotCount / 2) * 0.5) +     
-                (Math.floor(gpsCount / 5) * 0.5);         
-            
-            const rewardsScore = 
-                ((bonus.commendation1 || 0) * 0.3) +      
-                ((bonus.commendation2 || 0) * 1) +        
-                ((bonus.commendation3 || 0) * 3) -        
-                ((bonus.warning || 0) * 0.3) -            
-                ((bonus.minor || 0) * 1) -                
-                ((bonus.major || 0) * 3);                 
-
+            const attDeduct =
+                (Math.floor((Number(bonus.late) || 0) / 3) * 0.5) +
+                ((Number(bonus.absent) || 0) * 1) +
+                ((Number(bonus.leave) || 0) * 0.2) +
+                (Math.floor((Number(bonus.forgot) || 0) / 2) * 0.5) +
+                (Math.floor((Number(bonus.gps) || 0) / 5) * 0.5);
+            const rewardsScore =
+                ((Number(bonus.commendation1) || 0) * 0.3) +
+                ((Number(bonus.commendation2) || 0) * 1) +
+                ((Number(bonus.commendation3) || 0) * 3) -
+                ((Number(bonus.warning) || 0) * 0.3) -
+                ((Number(bonus.minor) || 0) * 1) -
+                ((Number(bonus.major) || 0) * 3);
             const final = annualFromQuarter + annualAssessmentScore + rewardsScore - attDeduct;
-            return { qDetails, qAvg: qAvg.toFixed(2), annualFromQuarter: annualFromQuarter.toFixed(2), scoreSelf: scoreSelf.toFixed(2), scoreSup: scoreSup.toFixed(2), scoreDir: scoreDir.toFixed(2), annualAssessmentScore: annualAssessmentScore.toFixed(2), attDeduct: attDeduct.toFixed(2), rewardsScore: rewardsScore.toFixed(2), final: final.toFixed(2), bonus };
-        };
 
-        const RankingView = ({ staffList, allData, currentYear, currentQuarter }) => {
-            const [data, setData] = useState([]);
-            useEffect(() => {
-                if (currentQuarter === 'ANNUAL') return;
-                const calculated = staffList.map(staff => {
-                    const key = getRecordKey(staff.id, currentYear, currentQuarter);
-                    const record = allData[key];
-                    if (!record) return { ...staff, score: 0, isNewHire: false };
-                    const res = calculateQuarterly(record);
-                    return { ...staff, score: parseFloat(res.total), isNewHire: record.isNewHire };
-                }).filter(s => s.score > 0);
-                calculated.sort((a, b) => b.score - a.score);
-                const totalActiveStaff = calculated.length;
-                const top20Count = Math.ceil(totalActiveStaff * 0.2);
-                const finalData = calculated.map((item, index) => {
-                    const rank = index + 1;
-                    const score = item.score;
-                    let baseBonus = 0, extraBonus = 0, rankBonus = 0;
-                    if (score >= 85) baseBonus = 1500; else if (score >= 75) baseBonus = 1000; else if (score >= 70) baseBonus = 500;
-                    if (score > 90) extraBonus += 500; if (score > 95) extraBonus += 500;
-                    if (rank <= top20Count) rankBonus = 500;
-                    return { ...item, rank, baseBonus, extraBonus, rankBonus, totalBonus: baseBonus + extraBonus + rankBonus };
-                });
-                setData(finalData);
-            }, [staffList, allData, currentYear, currentQuarter]);
-
-            if (currentQuarter === 'ANNUAL') return <div className="p-8 text-center text-slate-500">年度總評請使用個別考核頁面查看詳細報表，此功能僅支援季度獎金計算。</div>;
-            return (
-                <div className="space-y-6 animate-in fade-in">
-                    <Card><CardHeader className="flex flex-row items-center justify-between pb-2 bg-slate-50 border-b">
-                        <div><CardTitle className="text-xl font-bold flex items-center gap-2"><Icons.BarChart className="text-blue-600"/> {currentYear}年 {currentQuarter} 季度獎金排名表</CardTitle><p className="text-sm text-slate-500 mt-1">總計 {data.length} 位受評人員，前 20% (名次 &le; {Math.ceil(data.length * 0.2)}) 享有排名獎金</p></div>
-                        <div className="text-right"><div className="text-xs text-slate-500">預估發放總獎金</div><div className="text-2xl font-bold font-mono text-green-600">${data.reduce((acc, curr) => acc + curr.totalBonus, 0).toLocaleString()}</div></div>
-                    </CardHeader><CardContent className="p-0"><div className="overflow-x-auto"><table className="w-full text-sm text-left"><thead className="bg-slate-100 text-slate-600 uppercase font-bold text-xs"><tr><th className="px-4 py-3 w-16 text-center">排名</th><th className="px-4 py-3">姓名</th><th className="px-4 py-3 text-right">總分</th><th className="px-4 py-3 text-right">級距獎金</th><th className="px-4 py-3 text-right">高分加給</th><th className="px-4 py-3 text-right">排名加給</th><th className="px-4 py-3 text-right text-green-700 bg-green-50">總獎金</th></tr></thead><tbody className="divide-y divide-slate-100">{data.map(row => (<tr key={row.id} className="hover:bg-slate-50"><td className="px-4 py-3 text-center font-bold text-slate-500">{row.rank === 1 ? '🥇' : row.rank === 2 ? '🥈' : row.rank === 3 ? '🥉' : row.rank}</td><td className="px-4 py-3 font-medium">{row.name}{row.isNewHire && <Badge variant="warning" className="ml-2">新進</Badge>}</td><td className="px-4 py-3 text-right font-mono font-bold">{row.score.toFixed(2)}</td><td className="px-4 py-3 text-right text-slate-500">${row.baseBonus}</td><td className="px-4 py-3 text-right text-slate-500">{row.extraBonus > 0 ? `+$${row.extraBonus}` : '-'}</td><td className="px-4 py-3 text-right text-slate-500">{row.rankBonus > 0 ? <span className="text-blue-600 font-bold">+$500</span> : '-'}</td><td className="px-4 py-3 text-right font-bold text-green-700 bg-green-50">${row.totalBonus.toLocaleString()}</td></tr>))}</tbody></table></div></CardContent></Card>
-                </div>
-            );
-        };
-
-        function App() {
-            const [user, setUser] = useState(null);
-            const [authLoading, setAuthLoading] = useState(true);
-            const [viewMode, setViewMode] = useState('individual');
-            const [currentYear, setCurrentYear] = useState(114);
-            const [currentQuarter, setCurrentQuarter] = useState('Q1');
-            const [staffList, setStaffList] = useState([]);
-            const [selectedStaffId, setSelectedStaffId] = useState(null);
-            const [allData, setAllData] = useState({});
-            const [isStaffModalOpen, setIsStaffModalOpen] = useState(false);
-            const [editingStaff, setEditingStaff] = useState(null);
-            const fileInputRef = useRef(null);
-            const [dataLoading, setDataLoading] = useState(false);
-            const [saving, setSaving] = useState(false);
-            const [isSystemReady, setIsSystemReady] = useState(false);
-            
-            // ★ 新增：列表過濾狀態
-            const [showOnlyActive, setShowOnlyActive] = useState(true);
-
-            useEffect(() => {
-                const timer = setInterval(() => {
-                    if (window.db && window.auth && window.FirebaseAPI) {
-                        clearInterval(timer);
-                        setIsSystemReady(true);
-                    }
-                }, 100);
-                return () => clearInterval(timer);
-            }, []);
-
-            useEffect(() => {
-                if (!isSystemReady) return;
-
-                const session = sessionStorage.getItem('kuangyou_user');
-                if (!session) {
-                    alert("⛔ 請由管理系統登入");
-                    window.top.location.href = 'index.html';
-                    return;
-                }
-                const currentUser = JSON.parse(session);
-                setUser(currentUser);
-                setAuthLoading(false);
-
-                setDataLoading(true);
-                const unsubscribe = window.FirebaseAPI.subscribe((data) => {
-                    if (data) { 
-                        // 對員工名單進行排序 (可選，讓顯示更有序)
-                        const sList = data.staffList || [];
-                        sList.sort((a,b) => a.name.localeCompare(b.name));
-                        setStaffList(sList); 
-                        setAllData(data.allData || {}); 
-                    }
-                    setDataLoading(false);
-                });
-                return () => { if(unsubscribe) unsubscribe(); };
-            }, [isSystemReady]);
-
-            // 自動選取第一位可見員工
-            useEffect(() => {
-                if (user && !selectedStaffId && staffList.length > 0 && !dataLoading) {
-                    const firstActive = staffList.find(s => getStaffStatus(s, currentYear, currentQuarter) !== 'resigned');
-                    if(firstActive) setSelectedStaffId(firstActive.id);
-                    else setSelectedStaffId(staffList[0].id);
-                }
-            }, [staffList, dataLoading, selectedStaffId, user, currentYear, currentQuarter]);
-
-            const handleLogout = () => {
-                if(confirm("確定要離開考核系統嗎？")) {
-                    window.top.location.href = 'index.html'; 
-                }
+            return {
+                qDetails,
+                qAvg: qAvg.toFixed(2),
+                annualFromQuarter: annualFromQuarter.toFixed(2),
+                scoreSelf: scoreSelf.toFixed(2),
+                scoreSup: scoreSup.toFixed(2),
+                scoreDir: scoreDir.toFixed(2),
+                annualAssessmentScore: annualAssessmentScore.toFixed(2),
+                attDeduct: attDeduct.toFixed(2),
+                rewardsScore: rewardsScore.toFixed(2),
+                final: final.toFixed(2),
+                hasAnnualRecord: Object.keys(annualRecord).length > 0
             };
-
-            const saveToFirebase = async (newList, newData) => {
-                if (!user) return;
-                setSaving(true);
-                await window.FirebaseAPI.saveAll(newList, newData, user.email || user.name);
-                setSaving(false);
-            };
-
-            const getStaffStatus = (staff, year, quarter) => {
-                if (!staff.resignDate) return 'active';
-                const [rY, rM] = staff.resignDate.split('-').map(Number);
-                let qStartMonth = 1;
-                if (quarter === 'Q2') qStartMonth = 4;
-                if (quarter === 'Q3') qStartMonth = 7;
-                if (quarter === 'Q4' || quarter === 'ANNUAL') qStartMonth = 10;
-                if (rY < year) return 'resigned';
-                if (rY === year && rM < qStartMonth) return 'resigned';
-                return 'active';
-            };
-
-            const handleSaveStaff = (e) => {
-                e.preventDefault();
-                const formData = new FormData(e.target);
-                const newStaff = { id: editingStaff?.id || Date.now().toString(), name: formData.get('name').trim(), onboardDate: formData.get('onboardDate'), resignDate: formData.get('resignDate') };
-                let newList = editingStaff ? staffList.map(s => s.id === editingStaff.id ? newStaff : s) : [...staffList, newStaff];
-                if (!editingStaff) setSelectedStaffId(newStaff.id);
-                setStaffList(newList);
-                saveToFirebase(newList, allData);
-                setIsStaffModalOpen(false);
-                setEditingStaff(null);
-            };
-
-            const handleDeleteStaff = (id) => {
-                if(confirm('確定刪除此員工資料？(歷史考核紀錄將會一併無法顯示)')) {
-                    const newList = staffList.filter(s => s.id !== id);
-                    setStaffList(newList);
-                    if (selectedStaffId === id) setSelectedStaffId(null);
-                    saveToFirebase(newList, allData);
-                }
-            };
-
-            const updateAndSave = (newData) => { setAllData(newData); saveToFirebase(staffList, newData); };
-            const updateRecord = (key, field, value) => updateAndSave({ ...allData, [key]: { ...allData[key], [field]: value } });
-            const updateBonus = (key, field, val) => updateAndSave({ ...allData, [key]: { ...allData[key], bonus: { ...allData[key]?.bonus, [field]: val === '' ? '' : parseFloat(val) } } });
-            const updateScore = (key, itemId, role, val) => {
-                let num = val === '' ? '' : parseFloat(val);
-                if (num !== '' && num > 100) num = 100;
-                updateAndSave({ ...allData, [key]: { ...allData[key], scores: { ...allData[key]?.scores, [itemId]: { ...allData[key]?.scores?.[itemId], [role]: num } } } });
-            };
-
-            const handleFileUpload = (e) => {
-                const file = e.target.files[0];
-                if (!file) return;
-                const reader = new FileReader();
-                reader.onload = (evt) => {
-                    try {
-                        const parsed = JSON.parse(evt.target.result);
-                        if (parsed.staffList && parsed.allData && confirm("匯入將覆蓋雲端資料，確定？")) {
-                            setStaffList(parsed.staffList);
-                            setAllData(parsed.allData);
-                            saveToFirebase(parsed.staffList, parsed.allData);
-                        }
-                    } catch (err) { alert("讀取失敗"); }
-                };
-                reader.readAsText(file);
-                e.target.value = null;
-            };
-
-            const downloadData = () => {
-                const blob = new Blob([JSON.stringify({ staffList, allData, version: "v5_auth" }, null, 2)], { type: "application/json" });
-                const a = document.createElement("a");
-                a.href = URL.createObjectURL(blob);
-                a.download = `考核系統備份_${new Date().toISOString().slice(0,10)}.json`;
-                document.body.appendChild(a); a.click(); document.body.removeChild(a);
-            };
-
-            const currentStaff = staffList.find(s => s.id === selectedStaffId);
-            const recordKey = selectedStaffId ? getRecordKey(selectedStaffId, currentYear, currentQuarter) : null;
-            const currentRecord = allData[recordKey] || {};
-
-            if (!isSystemReady || authLoading) return <div className="h-screen w-full flex items-center justify-center bg-slate-900 text-white font-bold animate-pulse">系統連線中...</div>;
-            if (dataLoading) return <div className="h-screen w-full flex items-center justify-center bg-slate-50 text-slate-500 font-bold animate-pulse">正在同步雲端資料...</div>;
-
-            // ★ 新增：計算左側要顯示的名單
-            const displayStaffList = staffList.filter(staff => {
-                if (showOnlyActive) {
-                    return getStaffStatus(staff, currentYear, currentQuarter) !== 'resigned';
-                }
-                return true;
-            });
-
-            return (
-                <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
-                    <header className="bg-white border-b px-6 py-4 flex items-center justify-between sticky top-0 z-20 shadow-sm">
-                        <div className="flex items-center gap-3">
-                            <div className="bg-blue-600 p-2 rounded-lg"><Icons.Cloud className="h-5 w-5 text-white" /></div>
-                            <div>
-                                <h1 className="text-xl font-bold text-slate-800 hidden md:block">光祐居服員考核系統 <span className="text-xs font-normal text-slate-500 ml-2 bg-slate-100 px-2 py-0.5 rounded-full">v7.1 ERP版</span></h1>
-                                <p className="text-xs text-slate-400 md:hidden">v7.1 ERP</p>
-                            </div>
-                        </div>
-                        <div className="flex items-center gap-4">
-                            <div className="hidden md:flex items-center text-xs text-slate-500 border-r pr-4 mr-2">
-                                <span className="w-2 h-2 rounded-full bg-green-500 mr-2"></span>
-                                {user.name} ({user.role === 'super_admin' ? '總管理員' : '行政人員'})
-                            </div>
-                            <div className="flex bg-slate-100 rounded p-1 mr-2">
-                                <button onClick={() => setViewMode('individual')} className={`px-3 py-1 text-sm rounded transition-all flex items-center gap-1 ${viewMode==='individual' ? 'bg-white shadow text-blue-700 font-bold' : 'text-slate-500'}`}><Icons.Users className="w-4 h-4"/> 個別</button>
-                                <button onClick={() => setViewMode('ranking')} className={`px-3 py-1 text-sm rounded transition-all flex items-center gap-1 ${viewMode==='ranking' ? 'bg-white shadow text-blue-700 font-bold' : 'text-slate-500'}`}><Icons.BarChart className="w-4 h-4"/> 排名</button>
-                            </div>
-                            <div className="flex gap-2">
-                                <select value={currentYear} onChange={(e) => setCurrentYear(Number(e.target.value))} className="h-9 rounded border border-slate-300 px-2 text-sm font-bold bg-slate-50"><option value={113}>113年</option><option value={114}>114年</option><option value={115}>115年</option></select>
-                                <select value={currentQuarter} onChange={(e) => setCurrentQuarter(e.target.value)} className="h-9 rounded border border-slate-300 px-2 text-sm font-bold bg-slate-50"><option value="Q1">Q1</option><option value="Q2">Q2</option><option value="Q3">Q3</option><option value="Q4">Q4</option><option value="ANNUAL">年度</option></select>
-                            </div>
-                            <Button variant="secondary" size="icon" onClick={handleLogout} title="離開系統"><Icons.LogOut className="w-4 h-4"/></Button>
-                        </div>
-                    </header>
-
-                    <div className="flex flex-1 overflow-hidden h-[calc(100vh-73px)]">
-                        {viewMode === 'individual' && (
-                            <aside className="w-72 bg-white border-r flex flex-col h-full overflow-hidden shrink-0">
-                                <div className="p-4 border-b flex-shrink-0 flex flex-col gap-2">
-                                    <Button onClick={() => { setEditingStaff(null); setIsStaffModalOpen(true); }} className="w-full"><Icons.Plus className="mr-2 h-4 w-4" /> 新增名單</Button>
-                                    
-                                    {/* ★ 新增：顯示篩選開關 */}
-                                    <div className="flex items-center justify-between px-1 mt-2">
-                                        <label className="text-xs font-bold text-slate-500 flex items-center gap-1 cursor-pointer">
-                                            <input type="checkbox" checked={showOnlyActive} onChange={(e)=>setShowOnlyActive(e.target.checked)} className="w-3 h-3 text-blue-600 rounded border-gray-300 focus:ring-blue-500" />
-                                            只顯示考核期內在職
-                                        </label>
-                                        <span className="text-xs text-slate-400">共 {displayStaffList.length} 人</span>
-                                    </div>
-                                </div>
-                                <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                                    {displayStaffList.map(staff => {
-                                        const st = getStaffStatus(staff, currentYear, currentQuarter);
-                                        return (
-                                            <div key={staff.id} onClick={() => st!=='resigned' && setSelectedStaffId(staff.id)} className={`group flex items-center justify-between p-3 rounded-md cursor-pointer transition-all border border-transparent ${selectedStaffId === staff.id ? 'bg-blue-50 border-blue-200 shadow-sm' : 'hover:bg-slate-50'} ${st==='resigned' ? 'opacity-50 grayscale cursor-not-allowed bg-slate-50' : ''}`}>
-                                                <div className="flex items-center gap-3 overflow-hidden">
-                                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${selectedStaffId === staff.id ? 'bg-blue-200 text-blue-700' : 'bg-slate-200 text-slate-500'}`}>{staff.name.charAt(0)}</div>
-                                                    <div className="min-w-0"><div className="font-medium truncate text-slate-900">{staff.name}</div>{st==='resigned' && <Badge variant="destructive" className="mt-0.5 scale-90 origin-left">已離職</Badge>}</div>
-                                                </div>
-                                                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={(e) => { e.stopPropagation(); setEditingStaff(staff); setIsStaffModalOpen(true); }} className="p-1 hover:bg-slate-200 rounded text-slate-500"><Icons.Edit className="h-4 w-4"/></button><button onClick={(e) => { e.stopPropagation(); handleDeleteStaff(staff.id); }} className="p-1 hover:bg-red-100 rounded text-red-500"><Icons.Trash2 className="h-4 w-4"/></button></div>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                                <div className="p-4 border-t bg-slate-50 flex gap-2">
-                                    <Button onClick={downloadData} variant="secondary" className="flex-1 text-xs" title="下載備份"><Icons.Download className="w-4 h-4 mr-1"/> 備份</Button>
-                                    <Button onClick={() => fileInputRef.current.click()} variant="outline" className="flex-1 text-xs" title="匯入舊檔"><Icons.Upload className="w-4 h-4 mr-1"/> 匯入</Button>
-                                    <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".json"/>
-                                </div>
-                            </aside>
-                        )}
-                        <main className="flex-1 overflow-y-auto p-6 bg-slate-50">
-                            {viewMode === 'individual' ? (
-                                selectedStaffId ? (
-                                    <div className="max-w-5xl mx-auto">
-                                        <div className="mb-6 flex items-center justify-between">
-                                            <div><h2 className="text-2xl font-bold text-slate-800">{staffList.find(s=>s.id===selectedStaffId)?.name}</h2><p className="text-slate-500 text-sm flex items-center gap-2"><Icons.Calendar className="h-4 w-4"/> {currentYear}年 {currentQuarter==='ANNUAL'?'年度考核':currentQuarter+' 季考核'}</p></div>
-                                        </div>
-                                        {currentQuarter === 'ANNUAL' ? 
-                                            (() => {
-                                                const res = calculateAnnual(selectedStaffId, currentYear, allData);
-                                                const scores = currentRecord.scores || {};
-                                                const bonus = currentRecord.bonus || {};
-                                                return <div className="space-y-6 animate-in fade-in duration-300">
-                                                    <Card><CardHeader className="py-3 bg-blue-50"><CardTitle className="text-base text-blue-800">1. 季考核成績匯總 (佔15%)</CardTitle></CardHeader><CardContent className="pt-4"><div className="flex justify-between items-center text-sm mb-2">{res.qDetails.map(q => (<div key={q.q} className="text-center p-2 bg-slate-100 rounded min-w-[60px]"><div className="text-slate-500 font-bold">{q.q}</div><div className="font-mono">{typeof q.val === 'number' ? q.val.toFixed(1) : q.val}</div></div>))}<div className="text-xl font-bold text-blue-600 px-4">Avg: {res.qAvg} <span className="text-sm text-slate-400">x 15% = </span> {res.annualFromQuarter}</div></div></CardContent></Card>
-                                                    <div className="grid md:grid-cols-3 gap-6">
-                                                        <div className="md:col-span-2 space-y-6">
-                                                            <Card><CardHeader className="py-3 bg-slate-50"><CardTitle className="text-base">2. 出勤與獎懲</CardTitle></CardHeader><CardContent className="pt-4 grid grid-cols-1 gap-4"><div className="bg-red-50 p-3 rounded"><h4 className="font-bold text-red-800 text-sm mb-2">出勤扣分 (次/天)</h4>
-                                                            <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-sm">
-                                                                <div><label className="text-xs text-slate-500 block">遲到早退 (3次-0.5)</label><Input type="number" value={bonus.late||''} onChange={e=>updateBonus(recordKey, 'late', e.target.value)} /></div>
-                                                                <div><label className="text-xs text-slate-500 block">曠班 (1次-1)</label><Input type="number" value={bonus.absent||''} onChange={e=>updateBonus(recordKey, 'absent', e.target.value)} /></div>
-                                                                <div><label className="text-xs text-slate-500 block">未依規定請假 (1次-0.2)</label><Input type="number" value={bonus.leave||''} onChange={e=>updateBonus(recordKey, 'leave', e.target.value)} /></div>
-                                                                <div><label className="text-xs text-slate-500 block">忘記簽退 (2次-0.5)</label><Input type="number" value={bonus.forgot||''} onChange={e=>updateBonus(recordKey, 'forgot', e.target.value)} /></div>
-                                                                <div><label className="text-xs text-slate-500 block">定位異常 (5次-0.5)</label><Input type="number" value={bonus.gps||''} onChange={e=>updateBonus(recordKey, 'gps', e.target.value)} /></div>
-                                                            </div>
-                                                            <div className="mt-2 text-right text-red-600 font-bold text-sm">出勤小計扣分: -{res.attDeduct}</div>
-                                                            </div><div className="bg-green-50 p-3 rounded"><h4 className="font-bold text-green-800 text-sm mb-2">獎懲狀況 (支)</h4>
-                                                            <div className="grid grid-cols-3 md:grid-cols-6 gap-2 text-sm">
-                                                                <div><label className="text-xs text-green-700 block">嘉獎 (+0.3)</label><Input type="number" value={bonus.commendation1||''} onChange={e=>updateBonus(recordKey, 'commendation1', e.target.value)} /></div>
-                                                                <div><label className="text-xs text-green-700 block">小功 (+1)</label><Input type="number" value={bonus.commendation2||''} onChange={e=>updateBonus(recordKey, 'commendation2', e.target.value)} /></div>
-                                                                <div><label className="text-xs text-green-700 block">大功 (+3)</label><Input type="number" value={bonus.commendation3||''} onChange={e=>updateBonus(recordKey, 'commendation3', e.target.value)} /></div>
-                                                                <div><label className="text-xs text-red-700 block">申誡 (-0.3)</label><Input type="number" value={bonus.warning||''} onChange={e=>updateBonus(recordKey, 'warning', e.target.value)} /></div>
-                                                                <div><label className="text-xs text-red-700 block">小過 (-1)</label><Input type="number" value={bonus.minor||''} onChange={e=>updateBonus(recordKey, 'minor', e.target.value)} /></div>
-                                                                <div><label className="text-xs text-red-700 block">大過 (-3)</label><Input type="number" value={bonus.major||''} onChange={e=>updateBonus(recordKey, 'major', e.target.value)} /></div>
-                                                            </div>
-                                                            <div className="mt-2 text-right text-green-700 font-bold text-sm">獎懲小計: {parseFloat(res.rewardsScore) > 0 ? '+' : ''}{res.rewardsScore}</div>
-                                                            </div></CardContent></Card>
-                                                            {ANNUAL_STRUCTURE.map(sec => (<Card key={sec.id}><CardHeader className="py-3 bg-slate-50"><CardTitle className="text-base">{sec.title}</CardTitle></CardHeader><CardContent className="p-0"><table className="w-full text-sm"><thead className="bg-slate-100 text-xs text-slate-500"><tr><th className="p-2 text-left">項目 (滿分如題示)</th><th className="w-16 text-center">自評</th><th className="w-16 text-center">督導</th><th className="w-16 text-center">主任</th></tr></thead><tbody className="divide-y">{sec.items.map(item => {const s = scores[item.id] || {}; return <tr key={item.id}><td className="p-2">{item.text}</td><td className="p-1"><Input className="text-center px-0" value={s.self||''} onChange={e=>updateScore(recordKey, item.id, 'self', e.target.value)} /></td><td className="p-1"><Input className="text-center px-0 bg-blue-50" value={s.sup||''} onChange={e=>updateScore(recordKey, item.id, 'sup', e.target.value)} /></td><td className="p-1"><Input className="text-center" placeholder={`/${item.max}`} value={s.dir||''} onChange={e=>updateScore(recordKey, item.id, 'dir', e.target.value)} /></td></tr>;})}</tbody></table></CardContent></Card>))}
-                                                        </div>
-                                                        <div className="md:col-span-1"><Card className="bg-slate-900 text-white sticky top-4 border-none shadow-xl"><CardHeader><CardTitle className="flex items-center gap-2"><Icons.Trophy className="text-yellow-400"/> 年度總成績</CardTitle></CardHeader><CardContent className="space-y-4"><div className="text-center py-4 border-b border-slate-700"><div className="text-6xl font-bold font-mono text-yellow-400">{res.final}</div></div><div className="space-y-2 text-sm"><div className="flex justify-between"><span>季考核 (15%)</span><span className="font-mono">{res.annualFromQuarter}</span></div><div className="flex justify-between"><span>自評 (10%)</span><span className="font-mono">{res.scoreSelf}</span></div><div className="flex justify-between"><span>督導 (50%)</span><span className="font-mono">{res.scoreSup}</span></div><div className="flex justify-between"><span>主任 (25%)</span><span className="font-mono">{res.scoreDir}</span></div><div className="border-t border-slate-700 my-2 pt-2"></div><div className="flex justify-between text-red-400"><span>出勤扣分</span><span className="font-mono">-{res.attDeduct}</span></div><div className="flex justify-between text-green-400"><span>獎懲加減</span><span className="font-mono">{parseFloat(res.rewardsScore) > 0 ? '+' : ''}{res.rewardsScore}</span></div></div></CardContent></Card></div>
-                                                    </div>
-                                                </div>;
-                                            })()
-                                        : 
-                                            (() => {
-                                                const result = calculateQuarterly(currentRecord);
-                                                return <div className="space-y-6 animate-in fade-in duration-300">
-                                                    <Card className="border-purple-200 bg-purple-50">
-                                                        <CardContent className="pt-6 flex flex-col md:flex-row items-center justify-between gap-4">
-                                                            <div className="flex items-center gap-2">
-                                                                <div className="bg-purple-200 p-2 rounded-full"><Icons.History className="w-5 h-5 text-purple-700"/></div>
-                                                                <div>
-                                                                    <label className="font-bold text-purple-800 text-lg">歷史成績快速補登 (總分)</label>
-                                                                    <p className="text-xs text-purple-600">若有填寫此欄，將直接使用此分數，忽略下方評核表。</p>
-                                                                </div>
-                                                            </div>
-                                                            <div className="flex items-center gap-3">
-                                                                <span className="font-bold text-slate-600">本季總分：</span>
-                                                                <Input type="number" className="w-32 bg-white font-bold text-lg h-12 text-center border-purple-300 focus:ring-purple-500" placeholder="0.00" value={currentRecord.manualScore || ''} onChange={(e) => updateRecord(recordKey, 'manualScore', e.target.value)} />
-                                                            </div>
-                                                        </CardContent>
-                                                    </Card>
-                                                    {!result.isManual && (
-                                                        <>
-                                                            <div className="flex items-center space-x-2 bg-yellow-50 p-3 rounded border border-yellow-200"><input type="checkbox" id="isNewHire" checked={currentRecord.isNewHire || false} onChange={(e) => updateRecord(recordKey, 'isNewHire', e.target.checked)} className="w-4 h-4 text-blue-600 rounded" /><label htmlFor="isNewHire" className="text-sm font-medium text-slate-800">此考核為「新進人員/試用期」考核 (勾選後，此分數將<span className="text-red-600 font-bold">不列入</span>年度平均計算)</label></div>
-                                                            <div className="grid md:grid-cols-2 gap-4"><div className="space-y-4"><Card><CardContent className="pt-6"><h3 className="font-bold mb-4 flex items-center gap-2"><Icons.Trophy className="h-4 w-4 text-amber-500"/> 加扣分</h3><div className="grid grid-cols-2 gap-4 text-sm"><label>介紹新人 (人)</label><Input type="number" value={currentRecord.bonus?.newStaff||''} onChange={e=>updateBonus(recordKey, 'newStaff', e.target.value)} /><label>介紹個案 (案)</label><Input type="number" value={currentRecord.bonus?.newCase||''} onChange={e=>updateBonus(recordKey, 'newCase', e.target.value)} /><label>創新經驗 (分)</label><Input type="number" value={currentRecord.bonus?.innovation||''} onChange={e=>updateBonus(recordKey, 'innovation', e.target.value)} /><label className="text-red-600">稽核異常 (項)</label><Input type="number" value={currentRecord.bonus?.auditError||''} onChange={e=>updateBonus(recordKey, 'auditError', e.target.value)} /><label className="text-red-600">申訴屬實 (案)</label><Input type="number" value={currentRecord.bonus?.complaint||''} onChange={e=>updateBonus(recordKey, 'complaint', e.target.value)} /></div></CardContent></Card>{QUARTERLY_STRUCTURE.map(sec => (<Card key={sec.id}><CardHeader className="py-3 bg-slate-50"><CardTitle className="text-base">{sec.title}</CardTitle></CardHeader><CardContent className="p-0"><table className="w-full text-sm"><thead className="bg-slate-100 text-xs text-slate-500"><tr><th className="p-2 text-left">項目</th><th className="w-12 text-center">自評</th><th className="w-12 text-center">督導</th><th className="w-12 text-center">主任</th></tr></thead><tbody className="divide-y">{sec.items.map(item => {const s = currentRecord.scores?.[item.id] || {}; return <tr key={item.id}><td className="p-2">{item.text}</td><td className="p-1"><Input className="text-center px-0" value={s.self||''} onChange={e=>updateScore(recordKey, item.id, 'self', e.target.value)} /></td><td className="p-1"><Input className="text-center px-0 bg-blue-50" value={s.sup||''} onChange={e=>updateScore(recordKey, item.id, 'sup', e.target.value)} /></td><td className="p-1"><Input className="text-center px-0" value={s.dir||''} onChange={e=>updateScore(recordKey, item.id, 'dir', e.target.value)} /></td></tr>;})}</tbody></table></CardContent></Card>))}</div><div className="space-y-4"><Card className="bg-slate-800 text-white border-none sticky top-4"><CardHeader><CardTitle>本季成績單</CardTitle></CardHeader><CardContent><div className="text-5xl font-bold font-mono text-center mb-4">{result.total}</div><div className="space-y-2 text-sm text-slate-300">{result.details.map((d,i) => (<div key={i} className="flex justify-between border-b border-slate-700 pb-1"><span>{d.title}</span><span>{d.weighted}</span></div>))}</div>{currentRecord.isNewHire && <div className="mt-4 text-center bg-yellow-500/20 text-yellow-300 py-1 rounded">試用期 / 不計入年度</div>}</CardContent></Card></div></div>
-                                                        </>
-                                                    )}
-                                                </div>;
-                                            })()
-                                        }
-                                    </div>
-                                ) : (
-                                    <div className="h-full flex flex-col items-center justify-center text-slate-400"><Icons.Users className="h-16 w-16 mb-4 opacity-20" /><p>請選擇左側居服員進行考核</p></div>
-                                )
-                            ) : (
-                                <div className="max-w-5xl mx-auto"><RankingView staffList={staffList} allData={allData} currentYear={currentYear} currentQuarter={currentQuarter} /></div>
-                            )}
-                        </main>
-                    </div>
-
-                    <Modal isOpen={isStaffModalOpen} onClose={() => setIsStaffModalOpen(false)} title={editingStaff ? "編輯居服員資料" : "新增居服員"}>
-                        <form onSubmit={handleSaveStaff} className="space-y-4">
-                            <div><label className="block text-sm font-medium mb-1">姓名</label><Input name="name" defaultValue={editingStaff?.name} required /></div>
-                            <div className="grid grid-cols-2 gap-4"><div><label className="block text-sm font-medium mb-1">到職日 (如 113-01-01)</label><Input name="onboardDate" defaultValue={editingStaff?.onboardDate} placeholder="YYY-MM-DD" /></div><div><label className="block text-sm font-medium mb-1">離職日 (選填)</label><Input name="resignDate" defaultValue={editingStaff?.resignDate} placeholder="YYY-MM-DD" /><p className="text-xs text-slate-500 mt-1">設定後該日期後的季度將無法考核</p></div></div>
-                            <div className="flex justify-end pt-4"><Button type="submit"><Icons.Save className="w-4 h-4 mr-2"/> 儲存並同步</Button></div>
-                        </form>
-                    </Modal>
-                    {saving && <div className="saving-indicator flex items-center gap-1"><Icons.Cloud className="w-3 h-3 animate-bounce"/> 儲存中...</div>}
-                </div>
-            );
         }
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
+        function renderMetrics() {
+            let matchedCount = 0;
+            let unmatchedCount = 0;
+            state.employees.forEach((employee) => {
+                const legacyMatch = buildLegacyMatch(employee);
+                if (legacyMatch) {
+                    matchedCount += 1;
+                    return;
+                }
+                if (!isIgnoredUnmatchedEmployee(employee, legacyMatch)) {
+                    unmatchedCount += 1;
+                }
+            });
+            dom.metricEmployees.textContent = state.employees.length;
+            dom.metricLegacy.textContent = state.legacyStaffList.length;
+            dom.metricMatched.textContent = matchedCount;
+            dom.metricUnmatched.textContent = unmatchedCount;
+            dom.employeeCountBadge.textContent = `${getFilteredEmployees().length} 人`;
+        }
+
+        function renderCompletionOverview() {
+            const overview = buildCurrentPeriodCompletionOverview();
+            const currentPeriodLabel = `${state.currentYear} / ${state.currentQuarter}`;
+            dom.completionSummaryBadge.textContent = `${overview.completionPercent}%`;
+            dom.completionSummaryCards.innerHTML = `
+                <div class="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                    <div class="text-xs font-bold text-emerald-600">本期正式覆蓋率</div>
+                    <div class="mt-2 text-3xl font-black text-emerald-700">${overview.completionPercent}%</div>
+                </div>
+                <div class="rounded-xl border border-sky-200 bg-sky-50 p-4">
+                    <div class="text-xs font-bold text-sky-600">正式紀錄 / 應處理人數</div>
+                    <div class="mt-2 text-3xl font-black text-sky-700">${overview.savedCount} / ${overview.total}</div>
+                </div>
+                <div class="rounded-xl border border-violet-200 bg-violet-50 p-4">
+                    <div class="text-xs font-bold text-violet-600">已完成草稿 / 進行中</div>
+                    <div class="mt-2 text-3xl font-black text-violet-700">${overview.completedDrafts} / ${overview.inProgressDrafts}</div>
+                </div>
+                <div class="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                    <div class="text-xs font-bold text-amber-600">待匯入舊資料</div>
+                    <div class="mt-2 text-3xl font-black text-amber-700">${overview.legacyImportable}</div>
+                </div>
+                <div class="rounded-xl border border-rose-200 bg-rose-50 p-4">
+                    <div class="text-xs font-bold text-rose-600">待處理人數</div>
+                    <div class="mt-2 text-3xl font-black text-rose-700">${overview.pendingCount}</div>
+                </div>
+            `;
+
+            const noteParts = [
+                `目前期別：${currentPeriodLabel}`,
+                `正式紀錄 ${overview.savedCount} 筆`,
+                `待處理 ${overview.pendingCount} 人`
+            ];
+            if (overview.legacyImportable > 0) noteParts.push(`仍有 ${overview.legacyImportable} 筆舊版資料可匯入新版`);
+            if (overview.reminderCount > 0) noteParts.push(`提醒清單 ${overview.reminderCount} 人`);
+            dom.completionSummaryNote.textContent = noteParts.join(' ｜ ');
+        }
+
+        function renderDraftOverview() {
+            const entries = getCurrentPeriodDraftEntries();
+            const currentPeriodLabel = `${state.currentYear} / ${state.currentQuarter}`;
+            const matchedDrafts = entries.filter((entry) => entry.legacyMatch).length;
+            const newOnlyDrafts = entries.filter((entry) => !entry.legacyMatch && !entry.ignored).length;
+            const ignoredDrafts = entries.filter((entry) => entry.ignored).length;
+            const completedDrafts = entries.filter((entry) => getAssessmentDraftStats(entry.draft, state.currentQuarter).status === '已完成').length;
+            const inProgressDrafts = entries.filter((entry) => getAssessmentDraftStats(entry.draft, state.currentQuarter).status === '進行中').length;
+
+            dom.draftSummaryBadge.textContent = `${entries.length} 筆草稿`;
+            dom.draftCurrentPeriod.textContent = currentPeriodLabel;
+
+            dom.draftSummaryCards.innerHTML = `
+                <div class="rounded-xl border border-violet-200 bg-violet-50 p-4">
+                    <div class="text-xs font-bold text-violet-600">本期草稿總數</div>
+                    <div class="mt-2 text-3xl font-black text-violet-700">${entries.length}</div>
+                </div>
+                <div class="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                    <div class="text-xs font-bold text-emerald-600">可對照舊版</div>
+                    <div class="mt-2 text-3xl font-black text-emerald-700">${matchedDrafts}</div>
+                </div>
+                <div class="rounded-xl border border-blue-200 bg-blue-50 p-4">
+                    <div class="text-xs font-bold text-blue-600">新版直接建立</div>
+                    <div class="mt-2 text-3xl font-black text-blue-700">${newOnlyDrafts}</div>
+                </div>
+                <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <div class="text-xs font-bold text-slate-500">離職草稿</div>
+                    <div class="mt-2 text-3xl font-black text-slate-700">${ignoredDrafts}</div>
+                </div>
+                <div class="rounded-xl border border-cyan-200 bg-cyan-50 p-4">
+                    <div class="text-xs font-bold text-cyan-600">已完成草稿</div>
+                    <div class="mt-2 text-3xl font-black text-cyan-700">${completedDrafts}</div>
+                </div>
+                <div class="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                    <div class="text-xs font-bold text-amber-600">進行中草稿</div>
+                    <div class="mt-2 text-3xl font-black text-amber-700">${inProgressDrafts}</div>
+                </div>
+            `;
+
+            if (entries.length === 0) {
+                dom.draftList.innerHTML = '尚未建立本期草稿。';
+                return;
+            }
+
+            dom.draftList.innerHTML = entries.map((entry) => {
+                const active = entry.employee.id === state.selectedEmployeeId;
+                const stats = getAssessmentDraftStats(entry.draft, state.currentQuarter);
+                const badge = entry.legacyMatch
+                    ? '<span class="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-600">可對照舊版</span>'
+                    : (entry.ignored
+                        ? '<span class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">離職草稿</span>'
+                        : '<span class="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-600">新版建立</span>');
+                const statusClass = stats.status === '已完成'
+                    ? 'bg-cyan-100 text-cyan-700'
+                    : (stats.status === '進行中' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500');
+                return `
+                    <button data-draft-employee-id="${escapeHtml(entry.employee.id)}" class="inline-flex items-center gap-2 rounded-full border ${active ? 'border-violet-300 bg-violet-50 text-violet-700' : 'border-slate-200 bg-white text-slate-700'} px-3 py-2 text-sm font-bold hover:border-violet-300 hover:bg-violet-50">
+                        <span>${escapeHtml(entry.employee.name || '-')}</span>
+                        ${badge}
+                        <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${statusClass}">${stats.status} ${stats.percent}%</span>
+                    </button>
+                `;
+            }).join('');
+
+            document.querySelectorAll('[data-draft-employee-id]').forEach((button) => {
+                button.addEventListener('click', () => {
+                    state.selectedEmployeeId = button.dataset.draftEmployeeId;
+                    renderAll();
+                });
+            });
+        }
+
+        function renderSavedOverview() {
+            const entries = getCurrentPeriodSavedEntries();
+            const currentPeriodLabel = `${state.currentYear} / ${state.currentQuarter}`;
+            const matchedSaved = entries.filter((entry) => entry.legacyMatch).length;
+            const newOnlySaved = entries.filter((entry) => !entry.legacyMatch && !entry.ignored).length;
+            const ignoredSaved = entries.filter((entry) => entry.ignored).length;
+            const annualSaved = entries.filter((entry) => entry.savedRecord?.summary?.type === 'annual').length;
+
+            dom.savedSummaryBadge.textContent = `${entries.length} 筆正式紀錄`;
+            dom.savedCurrentPeriod.textContent = currentPeriodLabel;
+
+            dom.savedSummaryCards.innerHTML = `
+                <div class="rounded-xl border border-sky-200 bg-sky-50 p-4">
+                    <div class="text-xs font-bold text-sky-600">本期正式紀錄總數</div>
+                    <div class="mt-2 text-3xl font-black text-sky-700">${entries.length}</div>
+                </div>
+                <div class="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                    <div class="text-xs font-bold text-emerald-600">可對照舊版</div>
+                    <div class="mt-2 text-3xl font-black text-emerald-700">${matchedSaved}</div>
+                </div>
+                <div class="rounded-xl border border-blue-200 bg-blue-50 p-4">
+                    <div class="text-xs font-bold text-blue-600">新版直接建立</div>
+                    <div class="mt-2 text-3xl font-black text-blue-700">${newOnlySaved}</div>
+                </div>
+                <div class="rounded-xl border border-violet-200 bg-violet-50 p-4">
+                    <div class="text-xs font-bold text-violet-600">年度正式紀錄</div>
+                    <div class="mt-2 text-3xl font-black text-violet-700">${annualSaved}</div>
+                </div>
+                <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <div class="text-xs font-bold text-slate-500">離職正式紀錄</div>
+                    <div class="mt-2 text-3xl font-black text-slate-700">${ignoredSaved}</div>
+                </div>
+            `;
+
+            if (entries.length === 0) {
+                dom.savedList.innerHTML = '尚未儲存本期新版正式紀錄。';
+                return;
+            }
+
+            dom.savedList.innerHTML = entries.map((entry) => {
+                const active = entry.employee.id === state.selectedEmployeeId;
+                const summary = entry.savedRecord?.summary || {};
+                const legacyBadge = entry.legacyMatch
+                    ? '<span class="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-600">可對照舊版</span>'
+                    : (entry.ignored
+                        ? '<span class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">離職紀錄</span>'
+                        : '<span class="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-600">新版建立</span>');
+                const summaryLabel = summary.type === 'annual'
+                    ? `年度 ${summary.final || '-'}`
+                    : `季度 ${summary.total || '-'}`;
+                return `
+                    <button data-saved-employee-id="${escapeHtml(entry.employee.id)}" class="inline-flex items-center gap-2 rounded-full border ${active ? 'border-sky-300 bg-sky-50 text-sky-700' : 'border-slate-200 bg-white text-slate-700'} px-3 py-2 text-sm font-bold hover:border-sky-300 hover:bg-sky-50">
+                        <span>${escapeHtml(entry.employee.name || '-')}</span>
+                        ${legacyBadge}
+                        <span class="inline-flex items-center rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-sky-700">${escapeHtml(summaryLabel)}</span>
+                    </button>
+                `;
+            }).join('');
+
+            document.querySelectorAll('[data-saved-employee-id]').forEach((button) => {
+                button.addEventListener('click', () => {
+                    state.selectedEmployeeId = button.dataset.savedEmployeeId;
+                    renderAll();
+                });
+            });
+        }
+
+        function renderReminderOverview() {
+            const entries = getCurrentPeriodReminderEntries();
+            const currentPeriodLabel = `${state.currentYear} / ${state.currentQuarter}`;
+            const legacyPending = entries.filter((entry) => entry.legacyRecord && !entry.savedRecord).length;
+            const unsavedDrafts = entries.filter((entry) => entry.draftStats && !entry.savedRecord).length;
+            const incompleteDrafts = entries.filter((entry) => entry.draftStats && entry.draftStats.status !== '已完成').length;
+
+            dom.reminderSummaryBadge.textContent = `${entries.length} 筆提醒`;
+            dom.reminderCurrentPeriod.textContent = currentPeriodLabel;
+
+            dom.reminderSummaryCards.innerHTML = `
+                <div class="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                    <div class="text-xs font-bold text-amber-600">本期待處理總數</div>
+                    <div class="mt-2 text-3xl font-black text-amber-700">${entries.length}</div>
+                </div>
+                <div class="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                    <div class="text-xs font-bold text-emerald-600">舊版本期未匯入</div>
+                    <div class="mt-2 text-3xl font-black text-emerald-700">${legacyPending}</div>
+                </div>
+                <div class="rounded-xl border border-violet-200 bg-violet-50 p-4">
+                    <div class="text-xs font-bold text-violet-600">草稿未正式儲存</div>
+                    <div class="mt-2 text-3xl font-black text-violet-700">${unsavedDrafts}</div>
+                </div>
+                <div class="rounded-xl border border-rose-200 bg-rose-50 p-4">
+                    <div class="text-xs font-bold text-rose-600">草稿未完成</div>
+                    <div class="mt-2 text-3xl font-black text-rose-700">${incompleteDrafts}</div>
+                </div>
+            `;
+
+            if (entries.length === 0) {
+                dom.reminderList.innerHTML = '目前沒有待處理提醒。';
+                return;
+            }
+
+            dom.reminderList.innerHTML = entries.map((entry) => {
+                const active = entry.employee.id === state.selectedEmployeeId;
+                const badges = entry.reminders.map((message) => {
+                    const tone = message.includes('未匯入')
+                        ? 'bg-emerald-100 text-emerald-700'
+                        : (message.includes('未正式儲存')
+                            ? 'bg-violet-100 text-violet-700'
+                            : 'bg-rose-100 text-rose-700');
+                    return `<span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${tone}">${escapeHtml(message)}</span>`;
+                }).join('');
+                return `
+                    <button data-reminder-employee-id="${escapeHtml(entry.employee.id)}" class="inline-flex items-center gap-2 rounded-full border ${active ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-slate-200 bg-white text-slate-700'} px-3 py-2 text-sm font-bold hover:border-amber-300 hover:bg-amber-50">
+                        <span>${escapeHtml(entry.employee.name || '-')}</span>
+                        ${badges}
+                    </button>
+                `;
+            }).join('');
+
+            document.querySelectorAll('[data-reminder-employee-id]').forEach((button) => {
+                button.addEventListener('click', () => {
+                    state.selectedEmployeeId = button.dataset.reminderEmployeeId;
+                    renderAll();
+                });
+            });
+        }
+
+        function renderEmployeeList() {
+            const employees = getFilteredEmployees();
+            if (employees.length === 0) {
+                dom.employeeList.innerHTML = `<div class="p-8 text-center text-sm text-slate-400">找不到符合條件的居服員。</div>`;
+                return;
+            }
+            dom.employeeList.innerHTML = employees.map((employee) => {
+                const selected = employee.id === state.selectedEmployeeId;
+                const legacyMatch = buildLegacyMatch(employee);
+                const ignoredUnmatched = isIgnoredUnmatchedEmployee(employee, legacyMatch);
+                const draft = state.localDrafts[getAssessmentDraftKey(employee.id, state.currentYear, state.currentQuarter)];
+                const draftStats = draft ? getAssessmentDraftStats(draft, state.currentQuarter) : null;
+                const savedRecord = getSavedAssessmentRecord(employee.id, state.currentYear, state.currentQuarter);
+                const resigned = employee.resignDate ? `<span class="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-600">已離職</span>` : '';
+                const matchBadge = legacyMatch
+                    ? `<span class="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-600">已對照</span>`
+                    : (ignoredUnmatched
+                        ? `<span class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">已離職可忽略</span>`
+                        : `<span class="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-600">待對照</span>`);
+                const draftBadge = draftStats
+                    ? `<span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${draftStats.status === '已完成' ? 'bg-cyan-100 text-cyan-700' : 'bg-violet-100 text-violet-700'}">${draftStats.status} ${draftStats.percent}%</span>`
+                    : '';
+                const savedBadge = savedRecord
+                    ? '<span class="inline-flex items-center rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold text-sky-700">已儲存</span>'
+                    : '';
+                return `
+                    <button data-employee-id="${escapeHtml(employee.id)}" class="employee-item w-full text-left p-4 border-b border-slate-100 transition ${selected ? 'bg-blue-50' : 'bg-white hover:bg-slate-50'}">
+                        <div class="flex items-center justify-between gap-3">
+                            <div class="min-w-0">
+                                <div class="font-bold text-slate-800 truncate">${escapeHtml(employee.name || '-')}</div>
+                                <div class="mt-1 text-xs text-slate-400">${escapeHtml(employee.code || '未填員編')}</div>
+                            </div>
+                            <div class="flex flex-col items-end gap-1 shrink-0">${matchBadge}${savedBadge}${draftBadge}${resigned}</div>
+                        </div>
+                    </button>
+                `;
+            }).join('');
+            document.querySelectorAll('.employee-item').forEach((button) => {
+                button.addEventListener('click', () => {
+                    state.selectedEmployeeId = button.dataset.employeeId;
+                    renderAll();
+                });
+            });
+        }
+
+        function renderLegacyRecordList(legacyMatch) {
+            const tokens = legacyMatch.recordKeys
+                .map((key) => key.replace(`${legacyMatch.id}_`, ''))
+                .sort((a, b) => a.localeCompare(b));
+            if (tokens.length === 0) {
+                dom.legacyRecordList.innerHTML = '<span class="text-sm text-slate-400">這位員工在舊版尚無任何期別紀錄。</span>';
+                return;
+            }
+            dom.legacyRecordList.innerHTML = tokens
+                .map((token) => `<span class="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">${escapeHtml(token)}</span>`)
+                .join('');
+        }
+
+        function renderLegacyPeriodSummary(legacyMatch) {
+            const recordKey = getRecordKey(legacyMatch.id, state.currentYear, state.currentQuarter);
+            const currentRecord = state.legacyAllData[recordKey];
+
+            if (state.currentQuarter === 'ANNUAL') {
+                const annual = calculateAnnual(legacyMatch.id, state.currentYear, state.legacyAllData);
+                if (!annual.hasAnnualRecord && annual.qDetails.every((item) => item.value === '-')) {
+                    dom.legacyRecordBadge.className = 'inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600';
+                    dom.legacyRecordBadge.textContent = '本期無舊資料';
+                    dom.legacyPeriodSummary.innerHTML = `<div class="rounded-xl border border-slate-200 bg-slate-50 p-4 text-slate-500">舊版沒有 ${state.currentYear} 年度考核資料。</div>`;
+                    return;
+                }
+                dom.legacyRecordBadge.className = 'inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-700';
+                dom.legacyRecordBadge.textContent = '舊版年度摘要';
+                dom.legacyPeriodSummary.innerHTML = `
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div class="rounded-xl bg-slate-50 p-4 border border-slate-200">
+                            <div class="text-xs font-bold text-slate-400">年度總分</div>
+                            <div class="mt-2 text-3xl font-black text-slate-800">${annual.final}</div>
+                        </div>
+                        <div class="rounded-xl bg-blue-50 p-4 border border-blue-200">
+                            <div class="text-xs font-bold text-blue-600">季度平均折算</div>
+                            <div class="mt-2 text-2xl font-black text-blue-700">${annual.annualFromQuarter}</div>
+                            <div class="mt-1 text-xs text-blue-600">季度平均 ${annual.qAvg}</div>
+                        </div>
+                        <div class="rounded-xl bg-emerald-50 p-4 border border-emerald-200">
+                            <div class="text-xs font-bold text-emerald-600">獎懲 / 出勤</div>
+                            <div class="mt-2 text-sm leading-7 text-emerald-700">
+                                獎懲 ${parseFloat(annual.rewardsScore) > 0 ? '+' : ''}${annual.rewardsScore}<br>
+                                出勤扣分 -${annual.attDeduct}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-4 rounded-xl border border-slate-200 bg-white p-4">
+                        <div class="text-sm font-bold text-slate-700">季度摘要</div>
+                        <div class="mt-3 flex flex-wrap gap-2">
+                            ${annual.qDetails.map((item) => `<span class="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">${item.quarter}：${item.value}</span>`).join('')}
+                        </div>
+                    </div>
+                `;
+                return;
+            }
+
+            if (!currentRecord) {
+                dom.legacyRecordBadge.className = 'inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600';
+                dom.legacyRecordBadge.textContent = '本期無舊資料';
+                dom.legacyPeriodSummary.innerHTML = `<div class="rounded-xl border border-slate-200 bg-slate-50 p-4 text-slate-500">舊版沒有 ${state.currentYear} ${state.currentQuarter} 的考核資料。</div>`;
+                return;
+            }
+
+            const quarter = calculateQuarterly(currentRecord);
+            const bonus = currentRecord.bonus || {};
+            dom.legacyRecordBadge.className = 'inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-700';
+            dom.legacyRecordBadge.textContent = quarter.isManual ? '舊版手動總分' : '舊版季度摘要';
+            dom.legacyPeriodSummary.innerHTML = `
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div class="rounded-xl bg-slate-50 p-4 border border-slate-200">
+                        <div class="text-xs font-bold text-slate-400">季度總分</div>
+                        <div class="mt-2 text-3xl font-black text-slate-800">${quarter.total}</div>
+                        ${quarter.isNewHire ? '<div class="mt-2 text-xs font-bold text-amber-600">本期標記為新進，不列入季度平均</div>' : ''}
+                    </div>
+                    <div class="rounded-xl bg-blue-50 p-4 border border-blue-200">
+                        <div class="text-xs font-bold text-blue-600">資料型態</div>
+                        <div class="mt-2 text-sm leading-7 text-blue-700">
+                            ${quarter.isManual ? '此期為舊版手動總分' : '此期有各題評分細項'}<br>
+                            細項數量 ${quarter.details.length}
+                        </div>
+                    </div>
+                    <div class="rounded-xl bg-emerald-50 p-4 border border-emerald-200">
+                        <div class="text-xs font-bold text-emerald-600">加扣分</div>
+                        <div class="mt-2 text-sm leading-7 text-emerald-700">
+                            新進帶訓 ${bonus.newStaff || 0}<br>
+                            新案協助 ${bonus.newCase || 0}<br>
+                            創新提案 ${bonus.innovation || 0}<br>
+                            稽核缺失 ${bonus.auditError || 0}<br>
+                            客訴案件 ${bonus.complaint || 0}
+                        </div>
+                    </div>
+                </div>
+                ${quarter.isManual ? '' : `
+                    <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                        ${quarter.details.map((detail) => `
+                            <div class="rounded-xl border border-slate-200 bg-white p-4">
+                                <div class="text-sm font-bold text-slate-700">${escapeHtml(detail.title)}</div>
+                                <div class="mt-2 text-xs text-slate-500">原始分數 ${detail.raw}</div>
+                                <div class="mt-1 text-lg font-black text-slate-800">${detail.weighted}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                `}
+            `;
+        }
+
+        function renderNewDraftDefaults() {
+            dom.newDraftBadge.className = 'inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600';
+            dom.newDraftBadge.textContent = '尚未準備';
+            dom.newDraftSummary.innerHTML = '請先選擇左側居服員。';
+        }
+
+        function renderSavedRecordDefaults() {
+            dom.savedRecordBadge.className = 'inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600';
+            dom.savedRecordBadge.textContent = '尚未準備';
+            dom.savedRecordDetail.innerHTML = '請先選擇左側居服員。';
+        }
+
+        function renderNewFormDefaults() {
+            dom.newFormBadge.className = 'inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600';
+            dom.newFormBadge.textContent = '尚未準備';
+            dom.newFormSummary.innerHTML = '請先選擇左側居服員。';
+        }
+
+        function renderNewDraftSummary(employee, legacyMatch) {
+            const newRecordKey = `${employee.id}_${state.currentYear}_${state.currentQuarter}`;
+            const legacyRecordKey = legacyMatch ? getRecordKey(legacyMatch.id, state.currentYear, state.currentQuarter) : null;
+            const hasLegacyRecord = legacyRecordKey ? Boolean(state.legacyAllData[legacyRecordKey]) : false;
+            const ignoredUnmatched = isIgnoredUnmatchedEmployee(employee, legacyMatch);
+            const draft = getCurrentDraft(employee.id, state.currentYear, state.currentQuarter);
+            const stats = getAssessmentDraftStats(draft, state.currentQuarter);
+            const savedRecord = getSavedAssessmentRecord(employee.id, state.currentYear, state.currentQuarter);
+            const savedSummary = savedRecord?.summary || null;
+
+            let badgeClass = 'inline-flex items-center rounded-full bg-blue-100 px-3 py-1 text-xs font-bold text-blue-700';
+            let badgeText = '可開始建檔';
+            let statusText = '這位居服員可依主系統 employeeId 直接建立新版考核主鍵。';
+
+            if (ignoredUnmatched) {
+                badgeClass = 'inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600';
+                badgeText = '離職可不建';
+                statusText = '這位居服員在主系統已離職，且沒有舊版可延續資料，現階段可先忽略。';
+            } else if (legacyMatch && hasLegacyRecord) {
+                badgeClass = 'inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-700';
+                badgeText = '可延續舊版人員';
+                statusText = '這位居服員已對到舊版，且本期有舊資料，可先參考舊版內容，再逐步建立新版欄位。';
+            } else if (legacyMatch) {
+                badgeClass = 'inline-flex items-center rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-700';
+                badgeText = '建議先校對資料';
+                statusText = '這位居服員雖已對到舊版人員，但本期沒有舊資料，可直接以新版建立，但仍建議參考既有舊版期別。';
+            }
+
+            dom.newDraftBadge.className = badgeClass;
+            dom.newDraftBadge.textContent = badgeText;
+            dom.newDraftSummary.innerHTML = `
+                <div class="space-y-4">
+                    <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                        <div class="text-sm font-bold text-slate-700">新版建檔說明</div>
+                        <div class="mt-2 text-sm leading-7 text-slate-600">${statusText}</div>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="rounded-xl border border-slate-200 bg-white p-4">
+                            <div class="text-xs font-bold text-slate-400">新版主鍵</div>
+                            <div class="mt-2 break-all font-mono text-xs text-slate-700">${escapeHtml(newRecordKey)}</div>
+                        </div>
+                        <div class="rounded-xl border border-slate-200 bg-white p-4">
+                            <div class="text-xs font-bold text-slate-400">舊版對照主鍵</div>
+                            <div class="mt-2 break-all font-mono text-xs text-slate-700">${escapeHtml(legacyRecordKey || '本期沒有舊版主鍵')}</div>
+                        </div>
+                    </div>
+                    <div class="rounded-xl border border-blue-200 bg-blue-50 p-4">
+                        <div class="text-sm font-bold text-blue-800">新版至少應保留的欄位</div>
+                        <div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-blue-700">
+                            <div>employeeId：${escapeHtml(employee.id)}</div>
+                            <div>employeeCode：${escapeHtml(employee.code || '-')}</div>
+                            <div>employeeName：${escapeHtml(employee.name || '-')}</div>
+                            <div>year / quarter：${escapeHtml(state.currentYear)} / ${escapeHtml(state.currentQuarter)}</div>
+                            <div>legacyStaffId：${escapeHtml(legacyMatch?.id || '未對照')}</div>
+                            <div>legacyRecordExists：${hasLegacyRecord ? '是' : '否'}</div>
+                        </div>
+                    </div>
+                    <div class="rounded-xl border border-violet-200 bg-violet-50 p-4">
+                        <div class="flex flex-wrap items-center justify-between gap-3">
+                            <div class="text-sm font-bold text-violet-800">本期草稿完成度</div>
+                            <span class="inline-flex items-center rounded-full bg-white px-3 py-1 text-xs font-black text-violet-700">${stats.status}・${stats.percent}%</span>
+                        </div>
+                        <div class="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm text-violet-800">
+                            <div>評分欄位：${stats.scoreFilled} / ${stats.scoreTotal}</div>
+                            <div>加扣分欄位：${stats.bonusFilled} / ${stats.bonusTotal}</div>
+                            <div>備註：${stats.noteFilled ? '已填寫' : '尚未填寫'}</div>
+                        </div>
+                        <div class="mt-3 text-xs leading-6 text-violet-700">
+                            ${stats.missing.length ? `目前仍缺：${escapeHtml(stats.missing.slice(0, 3).join('、'))}` : '目前草稿欄位已填齊，可進入下一步正式建檔。'}
+                        </div>
+                    </div>
+                    <div class="rounded-xl border ${savedRecord ? 'border-sky-200 bg-sky-50' : 'border-slate-200 bg-slate-50'} p-4">
+                        <div class="flex flex-wrap items-center justify-between gap-3">
+                            <div class="text-sm font-bold ${savedRecord ? 'text-sky-800' : 'text-slate-700'}">新版正式紀錄</div>
+                            <span class="inline-flex items-center rounded-full px-3 py-1 text-xs font-black ${savedRecord ? 'bg-white text-sky-700' : 'bg-white text-slate-500'}">${savedRecord ? '已儲存正式版' : '尚未儲存'}</span>
+                        </div>
+                        <div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2 text-sm ${savedRecord ? 'text-sky-800' : 'text-slate-600'}">
+                            <div>本期主鍵：${escapeHtml(newRecordKey)}</div>
+                            <div>最後儲存：${escapeHtml(savedRecord?.meta?.savedAt || '-')}</div>
+                            <div>儲存人員：${escapeHtml(savedRecord?.meta?.savedBy?.name || '-')}</div>
+                            <div>本期摘要：${escapeHtml(savedSummary?.type === 'annual' ? `年度總分 ${savedSummary?.final || '-'}` : savedSummary?.type === 'quarterly' ? `季度總分 ${savedSummary?.total || '-'}` : '-')}</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderSavedRecordDetail(employee, legacyMatch) {
+            const savedRecord = getSavedAssessmentRecord(employee.id, state.currentYear, state.currentQuarter);
+            if (!savedRecord) {
+                dom.savedRecordBadge.className = 'inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600';
+                dom.savedRecordBadge.textContent = '尚未儲存';
+                dom.savedRecordDetail.innerHTML = `
+                    <div class="rounded-xl border border-slate-200 bg-slate-50 p-4 text-slate-600">
+                        這位員工在 <span class="font-bold">${escapeHtml(state.currentYear)} / ${escapeHtml(state.currentQuarter)}</span> 尚未建立新版正式紀錄。<br>
+                        你可以先匯入舊版、建立草稿，或直接填寫後按「儲存新版紀錄」。
+                    </div>
+                `;
+                return;
+            }
+
+            const summary = savedRecord.summary || {};
+            const draftStats = savedRecord.draftStats || {};
+            const meta = savedRecord.meta || {};
+            const legacyRecordKey = savedRecord.legacyRecordKey || (legacyMatch ? getRecordKey(legacyMatch.id, state.currentYear, state.currentQuarter) : '');
+            const legacyRecord = legacyMatch ? getLegacyAssessmentRecord(legacyMatch.id, state.currentYear, state.currentQuarter) : null;
+            const legacySummary = legacyRecord
+                ? (state.currentQuarter === 'ANNUAL'
+                    ? calculateAnnual(employee.id, state.currentYear, getAnnualComputationData(employee.id, legacyMatch?.id || '', state.currentYear))
+                    : calculateQuarterly(legacyRecord))
+                : null;
+
+            dom.savedRecordBadge.className = 'inline-flex items-center rounded-full bg-sky-100 px-3 py-1 text-xs font-bold text-sky-700';
+            dom.savedRecordBadge.textContent = '已儲存正式版';
+
+            const summaryBlock = summary.type === 'annual'
+                ? `
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div class="rounded-xl border border-sky-200 bg-white p-4">
+                            <div class="text-xs font-bold text-sky-500">年度總分</div>
+                            <div class="mt-2 text-2xl font-black text-sky-700">${escapeHtml(summary.final || '-')}</div>
+                        </div>
+                        <div class="rounded-xl border border-slate-200 bg-white p-4">
+                            <div class="text-xs font-bold text-slate-400">季度平均折算</div>
+                            <div class="mt-2 text-2xl font-black text-slate-700">${escapeHtml(summary.annualFromQuarter || '-')}</div>
+                        </div>
+                        <div class="rounded-xl border border-slate-200 bg-white p-4">
+                            <div class="text-xs font-bold text-slate-400">年度評鑑分</div>
+                            <div class="mt-2 text-2xl font-black text-slate-700">${escapeHtml(summary.annualAssessmentScore || '-')}</div>
+                        </div>
+                        <div class="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                            <div class="text-xs font-bold text-amber-600">出勤扣分</div>
+                            <div class="mt-2 text-xl font-black text-amber-700">${escapeHtml(summary.attDeduct || '-')}</div>
+                        </div>
+                        <div class="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                            <div class="text-xs font-bold text-emerald-600">獎懲加減分</div>
+                            <div class="mt-2 text-xl font-black text-emerald-700">${escapeHtml(summary.rewardsScore || '-')}</div>
+                        </div>
+                        <div class="rounded-xl border border-violet-200 bg-violet-50 p-4">
+                            <div class="text-xs font-bold text-violet-600">草稿完成度</div>
+                            <div class="mt-2 text-xl font-black text-violet-700">${escapeHtml(draftStats.percent ?? '-')}%</div>
+                        </div>
+                    </div>
+                `
+                : `
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div class="rounded-xl border border-sky-200 bg-white p-4">
+                            <div class="text-xs font-bold text-sky-500">季度總分</div>
+                            <div class="mt-2 text-2xl font-black text-sky-700">${escapeHtml(summary.total || '-')}</div>
+                        </div>
+                        <div class="rounded-xl border border-slate-200 bg-white p-4">
+                            <div class="text-xs font-bold text-slate-400">評分模式</div>
+                            <div class="mt-2 text-xl font-black text-slate-700">${summary.isManual ? '手動總分' : '逐題計分'}</div>
+                        </div>
+                        <div class="rounded-xl border border-violet-200 bg-violet-50 p-4">
+                            <div class="text-xs font-bold text-violet-600">草稿完成度</div>
+                            <div class="mt-2 text-xl font-black text-violet-700">${escapeHtml(draftStats.percent ?? '-')}%</div>
+                        </div>
+                    </div>
+                `;
+
+            const comparisonBlock = legacySummary
+                ? `
+                    <div class="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                        <div class="text-sm font-bold text-emerald-800">本期舊版 / 新版對照</div>
+                        <div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div class="rounded-xl border border-emerald-200 bg-white p-4 text-sm text-emerald-800">
+                                <div class="text-xs font-bold text-emerald-600">舊版摘要</div>
+                                <div class="mt-2 leading-7">
+                                    ${summary.type === 'annual'
+                                        ? `年度總分：${escapeHtml(legacySummary.final || '-')}<br>季度平均：${escapeHtml(legacySummary.qAvg || '-')}`
+                                        : `季度總分：${escapeHtml(legacySummary.total || '-')}<br>計分方式：${legacySummary.isManual ? '手動總分' : '逐題計分'}`
+                                    }
+                                </div>
+                            </div>
+                            <div class="rounded-xl border border-sky-200 bg-white p-4 text-sm text-sky-800">
+                                <div class="text-xs font-bold text-sky-600">新版摘要</div>
+                                <div class="mt-2 leading-7">
+                                    ${summary.type === 'annual'
+                                        ? `年度總分：${escapeHtml(summary.final || '-')}<br>季度平均：${escapeHtml(summary.qAvg || '-')}`
+                                        : `季度總分：${escapeHtml(summary.total || '-')}<br>計分方式：${summary.isManual ? '手動總分' : '逐題計分'}`
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `
+                : `
+                    <div class="rounded-xl border border-slate-200 bg-slate-50 p-4 text-slate-600">
+                        本期沒有可對照的舊版正式紀錄，這筆新版資料目前作為新版主紀錄使用。
+                    </div>
+                `;
+
+            dom.savedRecordDetail.innerHTML = `
+                <div class="space-y-4">
+                    <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                        <div class="text-sm font-bold text-slate-700">正式版存檔資訊</div>
+                        <div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm text-slate-700">
+                            <div>新版主鍵：<span class="font-mono text-xs">${escapeHtml(savedRecord.recordKey || '-')}</span></div>
+                            <div>舊版主鍵：<span class="font-mono text-xs">${escapeHtml(legacyRecordKey || '無')}</span></div>
+                            <div>最後儲存：${escapeHtml(meta.savedAt || '-')}</div>
+                            <div>儲存人員：${escapeHtml(meta.savedBy?.name || '-')}</div>
+                        </div>
+                    </div>
+                    ${summaryBlock}
+                    <div class="rounded-xl border border-slate-200 bg-white p-4">
+                        <div class="text-sm font-bold text-slate-700">正式版欄位完成情況</div>
+                        <div class="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm text-slate-700">
+                            <div>評分欄位：${escapeHtml(draftStats.scoreFilled ?? '-')} / ${escapeHtml(draftStats.scoreTotal ?? '-')}</div>
+                            <div>加扣分欄位：${escapeHtml(draftStats.bonusFilled ?? '-')} / ${escapeHtml(draftStats.bonusTotal ?? '-')}</div>
+                            <div>備註：${draftStats.noteFilled ? '已填寫' : '尚未填寫'}</div>
+                        </div>
+                    </div>
+                    ${comparisonBlock}
+                </div>
+            `;
+        }
+
+        function attachNewFormDraftEvents(employee, legacyRecord) {
+            const root = dom.newFormSummary;
+            if (!root) return;
+
+            root.querySelectorAll('[data-score-item][data-score-role]').forEach((input) => {
+                input.addEventListener('input', (event) => {
+                    const { scoreItem, scoreRole } = event.target.dataset;
+                    setDraftField(employee.id, state.currentYear, state.currentQuarter, (draft) => {
+                        if (!draft.scores[scoreItem]) draft.scores[scoreItem] = {};
+                        draft.scores[scoreItem][scoreRole] = event.target.value;
+                    });
+                });
+            });
+
+            root.querySelectorAll('[data-bonus-key]').forEach((input) => {
+                input.addEventListener('input', (event) => {
+                    const { bonusKey } = event.target.dataset;
+                    setDraftField(employee.id, state.currentYear, state.currentQuarter, (draft) => {
+                        draft.bonus[bonusKey] = event.target.value;
+                    });
+                });
+            });
+
+            root.querySelectorAll('[data-meta-key]').forEach((input) => {
+                input.addEventListener(input.type === 'checkbox' ? 'change' : 'input', (event) => {
+                    const { metaKey } = event.target.dataset;
+                    setDraftField(employee.id, state.currentYear, state.currentQuarter, (draft) => {
+                        draft[metaKey] = input.type === 'checkbox' ? event.target.checked : event.target.value;
+                    });
+                    renderNewFormSkeleton(employee, buildLegacyMatch(employee));
+                });
+            });
+
+            root.querySelector('[data-action="import-legacy"]')?.addEventListener('click', () => {
+                state.localDrafts[getAssessmentDraftKey(employee.id, state.currentYear, state.currentQuarter)] =
+                    buildDraftFromLegacyRecord(legacyRecord, state.currentQuarter);
+                persistLocalDrafts();
+                renderNewFormSkeleton(employee, buildLegacyMatch(employee));
+            });
+
+            root.querySelector('[data-action="clear-draft"]')?.addEventListener('click', () => {
+                clearCurrentDraft(employee.id, state.currentYear, state.currentQuarter);
+                renderNewFormSkeleton(employee, buildLegacyMatch(employee));
+            });
+
+            root.querySelector('[data-action="load-saved"]')?.addEventListener('click', () => {
+                const loaded = loadSavedRecordIntoDraft(employee.id, state.currentYear, state.currentQuarter);
+                if (!loaded) {
+                    alert('這一期目前尚未有已儲存的新版紀錄。');
+                    return;
+                }
+                renderAll();
+            });
+
+            root.querySelector('[data-action="save-record"]')?.addEventListener('click', async () => {
+                try {
+                    await saveCurrentAssessmentRecord(employee, buildLegacyMatch(employee));
+                    alert('新版考核紀錄已儲存。');
+                    renderAll();
+                } catch (error) {
+                    console.error(error);
+                    alert(`儲存新版考核紀錄失敗：${error?.message || error}`);
+                }
+            });
+
+            root.querySelector('[data-action="delete-record"]')?.addEventListener('click', async () => {
+                const savedRecord = getSavedAssessmentRecord(employee.id, state.currentYear, state.currentQuarter);
+                if (!savedRecord) {
+                    alert('這一期目前沒有已儲存的新版紀錄可刪除。');
+                    return;
+                }
+                const confirmed = confirm(`確定要刪除 ${employee.name} ${state.currentYear}/${state.currentQuarter} 的新版正式紀錄嗎？本機草稿不會一起刪除。`);
+                if (!confirmed) return;
+                try {
+                    await deleteCurrentAssessmentRecord(employee.id, state.currentYear, state.currentQuarter);
+                    alert('新版正式紀錄已刪除。');
+                    renderAll();
+                } catch (error) {
+                    console.error(error);
+                    alert(`刪除新版考核紀錄失敗：${error?.message || error}`);
+                }
+            });
+        }
+
+        function renderNewFormSkeleton(employee, legacyMatch) {
+            const isAnnual = state.currentQuarter === 'ANNUAL';
+            const currentStructure = isAnnual ? ANNUAL_STRUCTURE : QUARTERLY_STRUCTURE;
+            const legacyRecordKey = legacyMatch ? getRecordKey(legacyMatch.id, state.currentYear, state.currentQuarter) : null;
+            const legacyRecord = legacyRecordKey ? state.legacyAllData[legacyRecordKey] : null;
+            const hasLegacyRecord = Boolean(legacyRecord);
+            const draft = getCurrentDraft(employee.id, state.currentYear, state.currentQuarter);
+            const draftFilled = hasDraftContent(draft);
+            const savedRecord = getSavedAssessmentRecord(employee.id, state.currentYear, state.currentQuarter);
+
+            dom.newFormBadge.className = draftFilled
+                ? 'inline-flex items-center rounded-full bg-violet-100 px-3 py-1 text-xs font-bold text-violet-700'
+                : (hasLegacyRecord
+                    ? 'inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-700'
+                    : 'inline-flex items-center rounded-full bg-blue-100 px-3 py-1 text-xs font-bold text-blue-700');
+            dom.newFormBadge.textContent = savedRecord
+                ? '已有正式版'
+                : (draftFilled ? '本機草稿已保存' : (hasLegacyRecord ? '可對照舊版資料' : '可直接建立新版'));
+
+            const sectionCards = currentStructure.map((section) => {
+                const itemCount = Array.isArray(section.items) ? section.items.length : 0;
+                const extraText = isAnnual
+                    ? `年度題組，共 ${itemCount} 題`
+                    : `權重 ${section.weight}%・共 ${itemCount} 題`;
+                return `
+                    <div class="rounded-xl border border-slate-200 bg-white p-4">
+                        <div class="text-sm font-bold text-slate-800">${escapeHtml(section.title)}</div>
+                        <div class="mt-2 text-xs text-slate-500">${extraText}</div>
+                    </div>
+                `;
+            }).join('');
+
+            const summaryFields = isAnnual
+                ? `
+                    <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                        <div class="text-sm font-bold text-slate-700">年度評鑑預定欄位</div>
+                        <div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-slate-600">
+                            <div>季度平均折算</div>
+                            <div>年度自評 / 主管評分 / 主任評分</div>
+                            <div>出勤扣分</div>
+                            <div>獎懲加減分</div>
+                            <div>是否已有舊版資料可對照</div>
+                            <div>備註與轉換說明</div>
+                        </div>
+                    </div>
+                `
+                : `
+                    <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                        <div class="text-sm font-bold text-slate-700">季度評鑑預定欄位</div>
+                        <div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-slate-600">
+                            <div>各題自評 / 主管評分 / 主任評分</div>
+                            <div>新進 / 閏一新人標記</div>
+                            <div>新進帶訓 / 新案協助 / 創新提案</div>
+                            <div>稽核缺失 / 客訴案件</div>
+                            <div>手動總分（相容舊版）</div>
+                            <div>備註與轉換說明</div>
+                        </div>
+                    </div>
+                `;
+
+            const actionBar = `
+                <div class="flex flex-wrap items-center gap-3">
+                    <button type="button" data-action="import-legacy" class="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-700 ${hasLegacyRecord ? '' : 'hidden'}">帶入本期舊版資料</button>
+                    <button type="button" data-action="load-saved" class="rounded-xl border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-bold text-sky-700 ${savedRecord ? '' : 'hidden'}">載入已儲存版本</button>
+                    <button type="button" data-action="save-record" class="rounded-xl border border-indigo-200 bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-700">儲存新版紀錄</button>
+                    <button type="button" data-action="delete-record" class="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 ${savedRecord ? '' : 'hidden'}">刪除正式紀錄</button>
+                    <button type="button" data-action="clear-draft" class="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-bold text-rose-700">清除本期草稿</button>
+                    <div class="text-xs text-slate-500">可先保留本機草稿，再決定是否儲存成新版正式紀錄；不會覆蓋舊版資料，也不會寫回主系統 employees。</div>
+                </div>
+            `;
+
+            const metaEditor = isAnnual
+                ? `
+                    <div class="rounded-2xl border border-slate-200 bg-white p-4">
+                        <div class="text-base font-black text-slate-800">年度備註</div>
+                        <textarea data-meta-key="note" rows="4" class="mt-3 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-700" placeholder="可先記錄年度補充說明、舊版校對差異、人工判斷依據。">${escapeHtml(draft.note || '')}</textarea>
+                    </div>
+                `
+                : `
+                    <div class="rounded-2xl border border-slate-200 bg-white p-4">
+                        <div class="flex flex-wrap items-center justify-between gap-3">
+                            <div class="text-base font-black text-slate-800">季度草稿補充</div>
+                            <label class="inline-flex items-center gap-2 text-sm font-bold text-slate-600">
+                                <input data-meta-key="isNewHire" type="checkbox" class="h-4 w-4 rounded border-slate-300 text-blue-600" ${draft.isNewHire ? 'checked' : ''}>
+                                本期為新進 / 閏一新人
+                            </label>
+                        </div>
+                        <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <label class="text-xs font-bold text-slate-500">手動總分
+                                <input data-meta-key="manualScore" type="number" step="0.01" min="0" class="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700" value="${escapeHtml(draft.manualScore || '')}">
+                            </label>
+                            <div class="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs leading-6 text-slate-500">
+                                若你想先沿用舊版手動總分模式，可直接填這裡；若留空，就保留新版逐題評分與加扣分草稿。
+                            </div>
+                        </div>
+                        <textarea data-meta-key="note" rows="4" class="mt-4 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-700" placeholder="可先記錄本期備註、校對差異、舊版轉換說明。">${escapeHtml(draft.note || '')}</textarea>
+                    </div>
+                `;
+
+            const bonusEditor = isAnnual
+                ? `
+                    <div class="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                        <div class="text-base font-black text-amber-800">年度獎懲 / 出勤草稿</div>
+                        <div class="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+                            ${[
+                                ['late', '遲到次數'],
+                                ['absent', '曠職次數'],
+                                ['leave', '請假次數'],
+                                ['forgot', '忘刷次數'],
+                                ['gps', 'GPS異常'],
+                                ['commendation1', '嘉獎'],
+                                ['commendation2', '小功'],
+                                ['commendation3', '大功'],
+                                ['warning', '警告'],
+                                ['minor', '小過'],
+                                ['major', '大過']
+                            ].map(([key, label]) => `
+                                <label class="text-xs font-bold text-amber-700">${label}
+                                    <input data-bonus-key="${key}" type="number" step="1" min="0" class="mt-1 w-full rounded-xl border border-amber-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700" value="${escapeHtml(draft.bonus?.[key] || '')}">
+                                </label>
+                            `).join('')}
+                        </div>
+                    </div>
+                `
+                : `
+                    <div class="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                        <div class="text-base font-black text-amber-800">季度加扣分草稿</div>
+                        <div class="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+                            ${[
+                                ['newStaff', '新進帶訓'],
+                                ['newCase', '新案協助'],
+                                ['innovation', '創新提案'],
+                                ['auditError', '稽核缺失'],
+                                ['complaint', '客訴案件']
+                            ].map(([key, label]) => `
+                                <label class="text-xs font-bold text-amber-700">${label}
+                                    <input data-bonus-key="${key}" type="number" step="0.5" class="mt-1 w-full rounded-xl border border-amber-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700" value="${escapeHtml(draft.bonus?.[key] || '')}">
+                                </label>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+
+            const sectionEditors = currentStructure.map((section) => {
+                const items = (section.items || []).map((item) => {
+                    const score = draft.scores?.[item.id] || {};
+                    const maxHint = item.max ? ` / 滿分 ${item.max}` : '';
+                    return `
+                        <div class="rounded-xl border border-slate-200 bg-white p-4">
+                            <div class="text-sm font-bold text-slate-800">${escapeHtml(item.id)} ${escapeHtml(item.text)}</div>
+                            <div class="mt-1 text-xs text-slate-400">新版草稿欄位${maxHint}</div>
+                            <div class="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
+                                <label class="text-xs font-bold text-slate-500">自評
+                                    <input data-score-item="${escapeHtml(item.id)}" data-score-role="self" type="number" step="0.5" min="0" class="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700" value="${escapeHtml(score.self || '')}">
+                                </label>
+                                <label class="text-xs font-bold text-slate-500">主管評分
+                                    <input data-score-item="${escapeHtml(item.id)}" data-score-role="sup" type="number" step="0.5" min="0" class="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700" value="${escapeHtml(score.sup || '')}">
+                                </label>
+                                <label class="text-xs font-bold text-slate-500">主任評分
+                                    <input data-score-item="${escapeHtml(item.id)}" data-score-role="dir" type="number" step="0.5" min="0" class="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700" value="${escapeHtml(score.dir || '')}">
+                                </label>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+                return `
+                    <div class="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                        <div class="flex items-center justify-between gap-3">
+                            <div class="text-base font-black text-slate-800">${escapeHtml(section.title)}</div>
+                            <div class="text-xs font-bold text-slate-500">${isAnnual ? `年度題組・${section.items.length} 題` : `權重 ${section.weight}%・${section.items.length} 題`}</div>
+                        </div>
+                        <div class="mt-4 space-y-3">${items}</div>
+                    </div>
+                `;
+            }).join('');
+
+            dom.newFormSummary.innerHTML = `
+                <div class="space-y-4">
+                    <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                        <div class="text-sm font-bold text-slate-700">新版表單目前狀態</div>
+                        <div class="mt-2 text-sm leading-7 text-slate-600">
+                            目前正在替 <span class="font-bold text-slate-800">${escapeHtml(employee.name || '-')}</span>
+                            建立 <span class="font-bold text-slate-800">${escapeHtml(state.currentYear)} / ${escapeHtml(state.currentQuarter)}</span> 的新版考核草稿。
+                            ${hasLegacyRecord ? '本期已有舊版資料，可先帶入對照，再逐步校正新版欄位。' : '本期尚無舊版資料，可直接從新版草稿開始建立。'}
+                        </div>
+                    </div>
+                    ${actionBar}
+                    ${summaryFields}
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        ${sectionCards}
+                    </div>
+                    ${metaEditor}
+                    ${bonusEditor}
+                    <div class="space-y-4">
+                        ${sectionEditors}
+                    </div>
+                </div>
+            `;
+
+            attachNewFormDraftEvents(employee, legacyRecord);
+        }
+
+        function renderSelectedEmployee() {
+            const employee = state.employees.find((item) => item.id === state.selectedEmployeeId);
+            if (!employee) {
+                dom.selectedName.textContent = '請先選擇左側居服員';
+                dom.selectedSubtitle.textContent = '選人後可比對舊版資料、查看本期摘要、並建立新版草稿。';
+                dom.employeeDetail.innerHTML = '請先選擇左側居服員。';
+                dom.legacyDetail.innerHTML = '請先選擇左側居服員。';
+                dom.legacyPeriodSummary.innerHTML = '請先選擇左側居服員。';
+                dom.legacyRecordList.innerHTML = '';
+                dom.legacyMatchBadge.className = 'inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600';
+                dom.legacyMatchBadge.textContent = '尚未對照';
+                dom.legacyRecordBadge.className = 'inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600';
+                dom.legacyRecordBadge.textContent = '尚未讀取';
+                return;
+            }
+
+            const legacyMatch = buildLegacyMatch(employee);
+            renderNewDraftSummary(employee, legacyMatch);
+            renderSavedRecordDetail(employee, legacyMatch);
+            renderNewFormSkeleton(employee, legacyMatch);
+
+            dom.selectedName.textContent = employee.name || '未命名';
+            dom.selectedSubtitle.textContent = `${employee.code || '未填員編'}｜主系統 ID：${employee.id}`;
+
+            dom.employeeDetail.innerHTML = `
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div><div class="text-xs font-bold text-slate-400">姓名</div><div class="mt-1 font-bold text-slate-800">${escapeHtml(employee.name || '-')}</div></div>
+                    <div><div class="text-xs font-bold text-slate-400">員工編號</div><div class="mt-1 font-mono text-slate-700">${escapeHtml(employee.code || '-')}</div></div>
+                    <div><div class="text-xs font-bold text-slate-400">到職日</div><div class="mt-1 text-slate-700">${escapeHtml(employee.joinDate || '-')}</div></div>
+                    <div><div class="text-xs font-bold text-slate-400">離職日</div><div class="mt-1 text-slate-700">${escapeHtml(employee.resignDate || '仍在職')}</div></div>
+                    <div><div class="text-xs font-bold text-slate-400">角色</div><div class="mt-1 text-slate-700">${escapeHtml(employee.role || '-')}</div></div>
+                    <div><div class="text-xs font-bold text-slate-400">主系統 ID</div><div class="mt-1 break-all font-mono text-slate-600 text-xs">${escapeHtml(employee.id || '-')}</div></div>
+                </div>
+            `;
+
+            if (!legacyMatch) {
+                const ignoredUnmatched = isIgnoredUnmatchedEmployee(employee, legacyMatch);
+                dom.legacyMatchBadge.className = ignoredUnmatched
+                    ? 'inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600'
+                    : 'inline-flex items-center rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-700';
+                dom.legacyMatchBadge.textContent = ignoredUnmatched ? '已離職可忽略' : '尚未對到舊版';
+                dom.legacyDetail.innerHTML = `
+                    <div class="rounded-xl border ${ignoredUnmatched ? 'border-slate-200 bg-slate-50 text-slate-600' : 'border-amber-200 bg-amber-50 text-amber-800'} p-4">
+                        舊版 <code class="font-mono">staffList</code> 中沒有同名人員。<br>
+                        ${ignoredUnmatched
+                            ? '這位員工已離職，目前可以先忽略，不一定需要補做舊版對照。'
+                            : '若這位是新進人員，沒有舊版資料屬正常；若不是，後續可再補 employeeId 或對照主鍵。'}
+                    </div>
+                `;
+                dom.legacyRecordBadge.className = 'inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600';
+                dom.legacyRecordBadge.textContent = '無舊版本期資料';
+                dom.legacyPeriodSummary.innerHTML = `<div class="rounded-xl border border-slate-200 bg-slate-50 p-4 text-slate-500">這位員工尚未對應到舊版人員，本期也沒有可讀取的舊版資料。</div>`;
+                dom.legacyRecordList.innerHTML = '<span class="text-sm text-slate-400">沒有舊版期別索引。</span>';
+                return;
+            }
+
+            dom.legacyMatchBadge.className = 'inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-700';
+            dom.legacyMatchBadge.textContent = '已對到舊版';
+            dom.legacyDetail.innerHTML = `
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div><div class="text-xs font-bold text-slate-400">舊版姓名</div><div class="mt-1 font-bold text-slate-800">${escapeHtml(legacyMatch.name || '-')}</div></div>
+                    <div><div class="text-xs font-bold text-slate-400">舊版 staffId</div><div class="mt-1 break-all font-mono text-slate-600 text-xs">${escapeHtml(legacyMatch.id || '-')}</div></div>
+                    <div><div class="text-xs font-bold text-slate-400">舊版到職日</div><div class="mt-1 text-slate-700">${escapeHtml(legacyMatch.onboardDate || '-')}</div></div>
+                    <div><div class="text-xs font-bold text-slate-400">舊版離職日</div><div class="mt-1 text-slate-700">${escapeHtml(legacyMatch.resignDate || '仍在職')}</div></div>
+                    <div class="md:col-span-2"><div class="text-xs font-bold text-slate-400">舊版紀錄總數</div><div class="mt-1 text-slate-700">${legacyMatch.recordKeys.length} 筆</div></div>
+                </div>
+            `;
+
+            renderLegacyPeriodSummary(legacyMatch);
+            renderLegacyRecordList(legacyMatch);
+        }
+
+        function renderImportStatus(message, tone = 'info') {
+            const toneClass = tone === 'success'
+                ? 'border-emerald-100 bg-emerald-50/80 text-emerald-700'
+                : (tone === 'warning'
+                    ? 'border-amber-100 bg-amber-50/80 text-amber-700'
+                    : 'border-blue-100 bg-white/70 text-blue-700');
+            dom.importStatus.className = `mt-4 rounded-xl border px-4 py-3 text-sm ${toneClass}`;
+            dom.importStatus.textContent = message;
+        }
+
+        function renderAll() {
+            renderNewDraftDefaults();
+            renderSavedRecordDefaults();
+            renderNewFormDefaults();
+            renderMetrics();
+            renderCompletionOverview();
+            renderDraftOverview();
+            renderSavedOverview();
+            renderReminderOverview();
+            renderEmployeeList();
+            renderSelectedEmployee();
+        }
+
+        async function loadEmployees() {
+            const q = query(collection(window.db, 'employees'), where('role', '==', 'caregiver'));
+            const snap = await getDocs(q);
+            const employees = [];
+            snap.forEach((docSnap) => {
+                const data = docSnap.data() || {};
+                employees.push({
+                    id: docSnap.id,
+                    name: data.name || '',
+                    code: data.code || data.employeeId || '',
+                    joinDate: data.joinDate || '',
+                    resignDate: data.resignDate || '',
+                    role: data.role || ''
+                });
+            });
+            employees.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant'));
+            state.employees = employees;
+            if (!state.selectedEmployeeId && employees.length > 0) state.selectedEmployeeId = employees[0].id;
+        }
+
+        async function loadLegacyAssessment() {
+            const legacyDoc = await getDoc(doc(window.db, 'caregiver_system', 'main_data'));
+            const data = legacyDoc.exists() ? legacyDoc.data() : {};
+            state.legacyStaffList = Array.isArray(data.staffList) ? data.staffList : [];
+            state.legacyAllData = data.allData || {};
+        }
+
+        async function loadNewAssessmentRecords() {
+            const snap = await getDocs(collection(window.db, ASSESSMENT_V2_COLLECTION));
+            const records = {};
+            snap.forEach((docSnap) => {
+                const data = docSnap.data() || {};
+                records[docSnap.id] = { ...data, recordKey: data.recordKey || docSnap.id };
+            });
+            state.savedRecords = records;
+        }
+
+        async function init() {
+            dom.loading = document.getElementById('loading');
+            dom.app = document.getElementById('app');
+            dom.metricEmployees = document.getElementById('metric-employees');
+            dom.metricLegacy = document.getElementById('metric-legacy');
+            dom.metricMatched = document.getElementById('metric-matched');
+            dom.metricUnmatched = document.getElementById('metric-unmatched');
+            dom.draftSummaryBadge = document.getElementById('draft-summary-badge');
+            dom.draftSummaryCards = document.getElementById('draft-summary-cards');
+            dom.draftCurrentPeriod = document.getElementById('draft-current-period');
+            dom.draftList = document.getElementById('draft-list');
+            dom.savedSummaryBadge = document.getElementById('saved-summary-badge');
+            dom.savedSummaryCards = document.getElementById('saved-summary-cards');
+            dom.savedCurrentPeriod = document.getElementById('saved-current-period');
+            dom.savedList = document.getElementById('saved-list');
+            dom.reminderSummaryBadge = document.getElementById('reminder-summary-badge');
+            dom.reminderSummaryCards = document.getElementById('reminder-summary-cards');
+            dom.reminderCurrentPeriod = document.getElementById('reminder-current-period');
+            dom.reminderList = document.getElementById('reminder-list');
+            dom.employeeCountBadge = document.getElementById('employee-count-badge');
+            dom.employeeList = document.getElementById('employee-list');
+            dom.selectedName = document.getElementById('selected-name');
+            dom.selectedSubtitle = document.getElementById('selected-subtitle');
+            dom.employeeDetail = document.getElementById('employee-detail');
+            dom.legacyDetail = document.getElementById('legacy-detail');
+            dom.legacyMatchBadge = document.getElementById('legacy-match-badge');
+            dom.legacyRecordBadge = document.getElementById('legacy-record-badge');
+            dom.legacyPeriodSummary = document.getElementById('legacy-period-summary');
+            dom.legacyRecordList = document.getElementById('legacy-record-list');
+            dom.newDraftBadge = document.getElementById('new-draft-badge');
+            dom.newDraftSummary = document.getElementById('new-draft-summary');
+            dom.savedRecordBadge = document.getElementById('saved-record-badge');
+            dom.savedRecordDetail = document.getElementById('saved-record-detail');
+            dom.newFormBadge = document.getElementById('new-form-badge');
+            dom.newFormSummary = document.getElementById('new-form-summary');
+            dom.importStatus = document.getElementById('import-status');
+            dom.completionSummaryBadge = document.getElementById('completion-summary-badge');
+            dom.completionSummaryCards = document.getElementById('completion-summary-cards');
+            dom.completionSummaryNote = document.getElementById('completion-summary-note');
+
+            const session = sessionStorage.getItem('kuangyou_user');
+            if (!session) {
+                alert('請先登入後再使用考核評鑑系統。');
+                window.top.location.href = 'index.html';
+                return;
+            }
+            state.user = JSON.parse(session);
+            loadLocalDrafts();
+
+            const userPill = document.getElementById('user-pill');
+            userPill.textContent = `${state.user.name || '-'}｜${state.user.role || '-'}`;
+            userPill.classList.remove('hidden');
+
+            document.getElementById('refresh-btn').addEventListener('click', async () => {
+                dom.loading.classList.remove('hidden');
+                dom.app.classList.add('hidden');
+                await loadEmployees();
+                await loadLegacyAssessment();
+                await loadNewAssessmentRecords();
+                renderAll();
+                dom.loading.classList.add('hidden');
+                dom.app.classList.remove('hidden');
+            });
+
+            document.getElementById('back-btn').addEventListener('click', () => {
+                window.top.location.href = getDefaultHome(state.user.role);
+            });
+
+            document.getElementById('reload-v2-btn').addEventListener('click', async () => {
+                await loadNewAssessmentRecords();
+                renderAll();
+                renderImportStatus('已重新讀取新版正式紀錄。', 'success');
+            });
+
+            document.getElementById('export-json-btn')?.addEventListener('click', () => {
+                exportCurrentPeriodSavedJson();
+            });
+
+            document.getElementById('export-csv-btn')?.addEventListener('click', () => {
+                exportCurrentPeriodSavedCsv();
+            });
+
+            document.getElementById('import-current-btn').addEventListener('click', async () => {
+                const entries = getCurrentPeriodImportableEntries();
+                if (entries.length === 0) {
+                    renderImportStatus(`目前 ${state.currentYear}/${state.currentQuarter} 沒有可匯入的舊版資料。`, 'warning');
+                    return;
+                }
+                const confirmed = confirm(`確定要匯入 ${state.currentYear}/${state.currentQuarter} 的舊版資料嗎？\n只會匯入尚未建立的新版本期紀錄，不會覆蓋已存資料。`);
+                if (!confirmed) return;
+                const result = await importLegacyEntries(entries, false);
+                renderAll();
+                renderImportStatus(`本期舊版資料匯入完成：共 ${result.total} 筆，新增 ${result.imported} 筆，略過 ${result.skipped} 筆${result.failed.length ? `，失敗 ${result.failed.length} 筆` : ''}。`, result.failed.length ? 'warning' : 'success');
+            });
+
+            document.getElementById('import-all-btn').addEventListener('click', async () => {
+                const entries = getAllImportableLegacyEntries();
+                if (entries.length === 0) {
+                    renderImportStatus('目前沒有可匯入的舊版資料。', 'warning');
+                    return;
+                }
+                const confirmed = confirm(`確定要批次匯入全部已對照的舊版資料嗎？\n共找到 ${entries.length} 筆舊版紀錄。\n只會匯入尚未建立的新版本期紀錄，不會覆蓋已存資料。`);
+                if (!confirmed) return;
+                const result = await importLegacyEntries(entries, false);
+                renderAll();
+                renderImportStatus(`全部舊版資料匯入完成：共 ${result.total} 筆，新增 ${result.imported} 筆，略過 ${result.skipped} 筆${result.failed.length ? `，失敗 ${result.failed.length} 筆` : ''}。`, result.failed.length ? 'warning' : 'success');
+            });
+
+            document.getElementById('search-input').addEventListener('input', (event) => {
+                state.searchText = event.target.value;
+                renderEmployeeList();
+                renderMetrics();
+            });
+
+            document.getElementById('year-select').value = state.currentYear;
+            document.getElementById('year-select').addEventListener('change', (event) => {
+                state.currentYear = event.target.value;
+                renderSelectedEmployee();
+            });
+
+            document.getElementById('quarter-select').value = state.currentQuarter;
+            document.getElementById('quarter-select').addEventListener('change', (event) => {
+                state.currentQuarter = event.target.value;
+                renderSelectedEmployee();
+            });
+
+            await loadEmployees();
+            await loadLegacyAssessment();
+            await loadNewAssessmentRecords();
+            renderAll();
+            renderImportStatus('新版正式紀錄已載入，可先批次匯入舊版資料，再開始校對與續編。');
+
+            dom.loading.classList.add('hidden');
+            dom.app.classList.remove('hidden');
+        }
+
+        const bootTimer = setInterval(() => {
+            if (window.db && window.auth) {
+                clearInterval(bootTimer);
+                init();
+            }
+        }, 100);
     </script>
 </body>
 </html>

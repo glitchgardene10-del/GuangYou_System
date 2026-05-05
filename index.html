@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>光祐長照 ERP - 系統總入口</title>
     
+    <script src="permissions.js"></script>
     <script type="module" src="config.js"></script>
 
     <script src="https://cdn.tailwindcss.com"></script>
@@ -50,6 +51,21 @@
             } catch(e) { console.warn("設定讀取失敗", e); }
         }
 
+        async function ensureEntryPermission(role, uid, url) {
+            const permissions = window.KuangYouPermissions;
+            if (!permissions) return false;
+
+            for (let attempt = 0; attempt < 3; attempt++) {
+                await loadSystemSettings();
+                const allowed = permissions.canAccessEntryTarget(role, uid, url, systemSettings);
+                if (allowed) return true;
+                if (!(role === 'admin' && url === 'accounting_portal.html')) return false;
+                await new Promise(resolve => setTimeout(resolve, 250));
+            }
+
+            return permissions.canAccessEntryTarget(role, uid, url, systemSettings);
+        }
+
         window.openLogin = openLogin;
         window.closeLogin = closeLogin;
         window.handleLogin = handleLogin;
@@ -88,6 +104,9 @@
                 btn.disabled = true;
                 btn.classList.add('opacity-50');
 
+                // 確保使用最新的權限設定建立 session
+                await loadSystemSettings();
+
                 // 1. Firebase 帳密驗證
                 const userCredential = await signInWithEmailAndPassword(auth, email, pwd);
                 const uid = userCredential.user.uid;
@@ -99,16 +118,13 @@
                     const userData = docSnap.data();
                     if (userData.resignDate) throw new Error("此帳號已離職");
 
-                    // 3. 寫入 Session (供後台使用)
-                    sessionStorage.setItem('kuangyou_user', JSON.stringify({
-                        uid: uid, name: userData.name, role: userData.role, code: userData.code
-                    }));
+                    const baseSessionUser = { uid: uid, name: userData.name, role: userData.role, code: userData.code };
                     
                     // 記住帳號方便下次登入
                     localStorage.setItem('last_login_code', code);
 
                     // 4. 進行門禁檢查
-                    checkPermissionAndRedirect(userData, targetUrl);
+                    checkPermissionAndRedirect({ ...userData, ...baseSessionUser }, targetUrl);
                 } else {
                     throw new Error("無員工資料");
                 }
@@ -124,40 +140,32 @@
             }
         }
 
+        function syncSessionUser(user) {
+            const permissions = window.KuangYouPermissions;
+            const sessionUser = permissions
+                ? permissions.buildSessionUser(user, systemSettings)
+                : user;
+            sessionStorage.setItem('kuangyou_user', JSON.stringify(sessionUser));
+            return sessionUser;
+        }
+
         function checkPermissionAndRedirect(user, url) {
-            let allowed = false;
+            return checkPermissionAndRedirectAsync(user, url);
+        }
+
+        async function checkPermissionAndRedirectAsync(user, url) {
             const role = user.role;
-            const uid = user.id || auth.currentUser.uid;
-
-            // --- 規則 1: 老闆與總管 無敵 ---
-            if (role === 'super_admin' || role === 'manager') allowed = true;
-            
-            // --- 規則 2: 行政人員 (admin) 的細部檢查 ---
-            if (role === 'admin') {
-                
-                // (A) 行政後台：預設可進，或看是否有被勾選 (根據您在 attendance_admin 的設定)
-                if (url === 'admin_portal.html') {
-                    // 如果您希望 admin 預設就能進，保持 true
-                    // 如果希望連這都要勾選才行，改成： if (systemSettings.allowedAdmin?.includes(uid)) allowed = true;
-                    allowed = true; 
-                }
-                
-                // (B) 考勤後台：必須放行，不然沒人能去幫大家開權限 (除非是第一次設定)
-                if (url === 'attendance_admin.html') {
-                    allowed = true;
-                }
-
-                // (C) ★★★ 財務後台：嚴格檢查 allowedAccounting ★★★
-                if (url === 'accounting_portal.html') {
-                    if (systemSettings.allowedAccounting?.includes(uid)) {
-                        allowed = true;
-                    }
-                }
-            }
+            const uid = user.uid || user.id || auth.currentUser?.uid;
+            const allowed = await ensureEntryPermission(role, uid, url);
+            const permissions = window.KuangYouPermissions;
+            const isBoss = permissions ? permissions.isBoss(role) : ['manager', 'super_admin'].includes(role);
 
             if (allowed) {
-                window.location.href = url;
+                syncSessionUser(user);
+                const redirectUrl = (!isBoss && url === 'accounting_portal.html') ? 'admin_portal.html' : url;
+                window.location.href = redirectUrl;
             } else {
+                syncSessionUser(user);
                 alert(`⛔ 權限不足！\n\n您的身分 (${role}) 未被授權進入此區域。\n請聯繫管理員開通權限。`);
                 const btn = document.getElementById('btn-login');
                 btn.innerText = "確認登入";

@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>行政零用金管理 (v2.4 零用金科目標示修復版)</title>
     
+    <script src="permissions.js"></script>
     <script src="auth-guard.js"></script>
     <script type="module" src="config.js"></script>
 
@@ -25,6 +26,8 @@
 
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
+        const permissions = window.KuangYouPermissions;
+        const isBossRole = (role) => permissions ? permissions.isBoss(role) : ['manager', 'super_admin'].includes(role);
 
         const CATEGORIES = ["膳食費", "文具用品", "郵電費", "交通/油資", "修繕費", "雜項支出", "交際費", "其他"];
         
@@ -51,7 +54,7 @@
             const [expenseType, setExpenseType] = useState('petty_cash'); 
 
             const [note, setNote] = useState('');
-            const backLink = currentUser.role === 'manager' ? 'accounting_portal.html' : 'admin_portal.html';
+            const backLink = isBossRole(currentUser.role) ? 'accounting_portal.html' : 'admin_portal.html';
 
             useEffect(() => {
                 const startStr = `${filterMonth}-01`;

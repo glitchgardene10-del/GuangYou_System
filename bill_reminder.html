@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>待繳帳單/請款中心 (v3.2 智能連動修正版)</title>
     
+    <script src="permissions.js"></script>
     <script src="auth-guard.js"></script>
     <script type="module" src="config.js"></script>
 
@@ -25,6 +26,8 @@
 
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
+        const permissions = window.KuangYouPermissions;
+        const isBossRole = (role) => permissions ? permissions.isBoss(role) : ['manager', 'super_admin'].includes(role);
 
         const EXPENSE_TYPES = [
             { name: "水電費", code: "5202" },
@@ -43,7 +46,6 @@
             
             // 權限管理
             const [isManager, setIsManager] = useState(false);
-            const BOSS_EMAILS = ["admin@kuangyou.internal"]; 
 
             // 銀行列表狀態
             const [bankOptions, setBankOptions] = useState([]);
@@ -61,13 +63,12 @@
             const [selectedBill, setSelectedBill] = useState(null);
             const [paymentMethod, setPaymentMethod] = useState('bank'); // bank or cash_1101
             const [selectedBank, setSelectedBank] = useState('');
-            const backLink = currentUser.role === 'manager' ? 'accounting_portal.html' : 'admin_portal.html';
+            const backLink = isBossRole(currentUser.role) ? 'accounting_portal.html' : 'admin_portal.html';
 
             useEffect(() => {
                 const unsubscribeAuth = window.auth.onAuthStateChanged((user) => {
                     if (user) {
-                        if (BOSS_EMAILS.includes(user.email)) setIsManager(true);
-                        else setIsManager(false);
+                        setCurrentUser(JSON.parse(sessionStorage.getItem('kuangyou_user') || '{}'));
                     }
                 });
 
@@ -108,6 +109,10 @@
 
                 return () => { unsubscribeAuth(); unsubscribeBills(); };
             }, []);
+
+            useEffect(() => {
+                setIsManager(isBossRole(currentUser.role));
+            }, [currentUser.role]);
 
             const handleSubmit = async () => {
                 if (!title || !amount) return alert("請填寫完整");

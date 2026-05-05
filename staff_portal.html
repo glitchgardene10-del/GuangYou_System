@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
@@ -20,28 +20,36 @@
         body { font-family: 'Noto Sans TC', sans-serif; background-color: #f3f4f6; -webkit-tap-highlight-color: transparent; overscroll-behavior-y: none; } 
         .btn-press:active { transform: scale(0.95); transition: transform 0.1s; }
         .modal { transition: opacity 0.25s ease; }
-        .tab-active { color: #2563eb; border-bottom: 2px solid #2563eb; }
+        .tab-active { color: #2563eb; }
         .tab-inactive { color: #94a3b8; }
         .status-late { background-color: #fffbeb; border-color: #fcd34d; color: #b45309; } 
         .status-done { background-color: #f3f4f6; border-color: #e5e7eb; color: #9ca3af; pointer-events: none; }
+        .request-shell { background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%); border: 1px solid #e2e8f0; border-radius: 22px; box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05); }
         ::-webkit-scrollbar { display: none; }
     </style>
 
     <script type="module">
-        import { collection, addDoc, onSnapshot, query, where, deleteDoc, doc, updateDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+        import { collection, addDoc, onSnapshot, query, where, deleteDoc, doc, updateDoc, getDoc, getDocs } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
         // ★ 新增 updatePassword, reauthenticateWithCredential, EmailAuthProvider
         import { signInWithEmailAndPassword, signOut, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 
         // Webhook 設定
-        const NOTIFY_URL = "https://discord.com/api/webhooks/1467732362396831825/pvTBpfX-cMqlESWn2kfGEmSGMVkBTPLHKcnQrxw9FhLsopK-wUZ7PTvvXTN8hjByCKXP"; 
+        const NOTIFY_URL = ""; 
 
         let db, auth;
         let currentUser = null;
         let todayAttendance = null;
         let currentTab = 'my'; 
+        let unsubscribeRequests = null;
+        let requestFilterMonth = dayjs().format('YYYY-MM');
+        let requestFilterStatus = 'all';
         let systemSettings = { allowedProxies: [], workStartTime: "08:30", workEndTime: "17:30", clockBuffer: 5 };
         let todayLeaves = []; 
         let currentLocationType = 'office'; 
+        let currentAnnualBalance = 0;
+        let currentCompBalance = 0;
+        let currentReservedAnnual = 0;
+        let currentReservedComp = 0;
 
         // 全域綁定
         window.loginAs = loginAs;
@@ -49,18 +57,40 @@
         window.clockIn = clockIn;
         window.clockOut = clockOut;
         window.sendCorrectionRequest = sendCorrectionRequest; 
-        window.openModal = (id) => document.getElementById(id).classList.remove('hidden');
+        window.openModal = (id) => {
+            document.getElementById(id).classList.remove('hidden');
+            if (id === 'modal-leave') {
+                setTimeout(() => {
+                    const modeInput = document.getElementById('leave-mode');
+                    if (modeInput && !modeInput.value) modeInput.value = 'full_day';
+                    updateLeaveFormMode();
+                }, 0);
+            }
+        };
         window.closeModal = (id) => {
             document.getElementById(id).classList.add('hidden');
             // 清空輸入框
             document.querySelectorAll(`#${id} input`).forEach(i => i.value = '');
+            if (id === 'modal-leave') {
+                const modeInput = document.getElementById('leave-mode');
+                const typeInput = document.getElementById('leave-type');
+                const halfSlotInput = document.getElementById('leave-half-slot');
+                if (modeInput) modeInput.value = 'full_day';
+                if (typeInput) typeInput.value = '特休';
+                if (halfSlotInput) halfSlotInput.value = 'am';
+                updateLeaveFormMode();
+            }
         };
         window.submitLeave = submitLeave;
         window.submitOvertime = submitOvertime;
         window.deleteRequest = deleteRequest;
         window.switchRequestTab = switchRequestTab;
+        window.changeRequestMonth = changeRequestMonth;
+        window.changeRequestStatus = changeRequestStatus;
         window.switchLocation = switchLocation;
         window.checkPeriodAutoFill = checkPeriodAutoFill;
+        window.updateLeaveFormMode = updateLeaveFormMode;
+        window.updateLeavePreview = updateLeavePreview;
         // ★ 新增綁定
         window.changePassword = changePassword;
 
@@ -155,6 +185,10 @@
 
         async function logout() {
             if(confirm("確定要登出嗎？(下次需重新輸入密碼)")) {
+                if (unsubscribeRequests) {
+                    unsubscribeRequests();
+                    unsubscribeRequests = null;
+                }
                 await signOut(auth);
                 location.reload();
             }
@@ -183,17 +217,11 @@
                 
                 // 2. 更新 Firebase Auth 密碼
                 await updatePassword(user, newPass);
-
-                // 3. 同步更新 Firestore (方便管理員查看/協助)
-                await updateDoc(doc(db, "employees", user.uid), {
-                    password: newPass,
-                    passwordUpdatedAt: new Date().toISOString()
-                });
-
-                alert("✅ 密碼修改成功！\n請使用新密碼重新登入。");
+                alert("密碼修改成功，系統將使用新密碼重新登入。");
                 closeModal('modal-password');
                 await signOut(auth);
                 location.reload();
+                return;
 
             } catch (error) {
                 console.error(error);
@@ -210,6 +238,7 @@
         }
 
         async function sendNotification(message) {
+            if (!NOTIFY_URL) return;
             try {
                 await fetch(NOTIFY_URL, {
                     method: "POST",
@@ -246,16 +275,221 @@
                         else annual += d.remaining; 
                     }
                 });
-                document.getElementById('bal-annual').innerText = parseFloat(annual.toFixed(1)) + " H";
-                document.getElementById('bal-comp').innerText = parseFloat(comp.toFixed(1)) + " H";
+                currentAnnualBalance = parseFloat(annual.toFixed(3));
+                currentCompBalance = parseFloat(comp.toFixed(3));
+                document.getElementById('bal-annual').innerText = Number(annual.toFixed(3)).toFixed(3) + " H";
+                document.getElementById('bal-comp').innerText = Number(comp.toFixed(3)).toFixed(3) + " H";
+                renderLeaveBalanceSummary();
+                refreshReservedLeaveSummary();
+                updateLeavePreview();
             });
         }
 
+        function createInclusiveDateRange(startDate, endDate) {
+            const dates = [];
+            let cursor = dayjs(startDate);
+            const last = dayjs(endDate);
+            while (cursor.isBefore(last) || cursor.isSame(last, 'day')) {
+                dates.push(cursor.format('YYYY-MM-DD'));
+                cursor = cursor.add(1, 'day');
+            }
+            return dates;
+        }
+
+        function getLeaveModeLabel(mode) {
+            if (mode === 'full_day') return '整日請假';
+            if (mode === 'half_day') return '半日請假';
+            return '上班中途請假';
+        }
+
+        function getHalfDaySlotLabel(slot) {
+            return slot === 'am' ? '上午半日' : '下午半日';
+        }
+
+        function getLeaveDateLabel(req) {
+            if (req.requestDateLabel) return req.requestDateLabel;
+            if (req.startDate && req.endDate && req.startDate !== req.endDate) return `${req.startDate} ~ ${req.endDate}`;
+            return req.startDate || req.date || '-';
+        }
+
+        function getRequestCoveredSegments(req, targetDate) {
+            if (Array.isArray(req.dateBreakdown) && req.dateBreakdown.length > 0) {
+                return req.dateBreakdown.filter((item) => item.date === targetDate);
+            }
+
+            if (!req.date && !req.startDate) return [];
+            const legacyDate = req.startDate || req.date;
+            if (legacyDate !== targetDate) return [];
+            return [{ date: legacyDate, period: req.period || 'middle', hours: req.hours || 0 }];
+        }
+
+        function getLeaveBreakdown(mode, startDate, endDate, halfDaySlot, hours) {
+            if (mode === 'full_day') {
+                return createInclusiveDateRange(startDate, endDate).map((date) => ({ date, hours: 8, period: 'full', label: '整日' }));
+            }
+            if (mode === 'half_day') {
+                return [{
+                    date: startDate,
+                    hours: 4,
+                    period: halfDaySlot === 'am' ? 'start' : 'end',
+                    label: getHalfDaySlotLabel(halfDaySlot)
+                }];
+            }
+            return [{
+                date: startDate,
+                hours: Number(hours),
+                period: 'middle',
+                label: '中途請假'
+            }];
+        }
+
+        function getTotalLeaveHours(mode, startDate, endDate, hours) {
+            if (mode === 'full_day') return createInclusiveDateRange(startDate, endDate).length * 8;
+            if (mode === 'half_day') return 4;
+            return Number(hours || 0);
+        }
+
+        async function getReservedLeaveTotals() {
+            const reserved = { annual: 0, comp: 0 };
+            const q = query(
+                collection(db, "requests"),
+                where("empId", "==", currentUser.id),
+                where("category", "==", "leave")
+            );
+            const snap = await getDocs(q);
+            snap.forEach((docSnap) => {
+                const data = docSnap.data();
+                if (data.status !== 'pending' || data.reservationStatus !== 'reserved' || !Array.isArray(data.allocationPreview)) return;
+                data.allocationPreview.forEach((item) => {
+                    const itemHours = Number(item.hours || 0);
+                    if (item.type === '補休') reserved.comp += itemHours;
+                    if (item.type === '特休') reserved.annual += itemHours;
+                });
+            });
+            return reserved;
+        }
+
+        function renderLeaveBalanceSummary() {
+            const annualHint = document.getElementById('bal-annual-sub');
+            const compHint = document.getElementById('bal-comp-sub');
+            const annualAvailable = Math.max(0, Number((currentAnnualBalance - currentReservedAnnual).toFixed(3)));
+            const compAvailable = Math.max(0, Number((currentCompBalance - currentReservedComp).toFixed(3)));
+            if (annualHint) annualHint.innerText = `可用 ${annualAvailable.toFixed(3)}H ｜ 預佔 ${Number(currentReservedAnnual || 0).toFixed(3)}H`;
+            if (compHint) compHint.innerText = `可用 ${compAvailable.toFixed(3)}H ｜ 預佔 ${Number(currentReservedComp || 0).toFixed(3)}H`;
+        }
+
+        async function refreshReservedLeaveSummary() {
+            if (!currentUser?.id) return;
+            const reserved = await getReservedLeaveTotals();
+            currentReservedAnnual = Number(reserved.annual.toFixed(3));
+            currentReservedComp = Number(reserved.comp.toFixed(3));
+            renderLeaveBalanceSummary();
+        }
+
+        function calculateAllocationPreview(requestedType, totalHours, availableComp, availableAnnual) {
+            const preview = [];
+            let remaining = Number(totalHours || 0);
+
+            const pushItem = (type, hours) => {
+                if (hours > 0) preview.push({ type, hours: Number(hours.toFixed(3)) });
+            };
+
+            if (!['補休', '特休'].includes(requestedType)) {
+                pushItem(requestedType, remaining);
+                return preview;
+            }
+
+            const useCompFirst = requestedType === '補休';
+            const firstType = useCompFirst ? '補休' : '特休';
+            const secondType = useCompFirst ? '特休' : '補休';
+            let firstBalance = useCompFirst ? availableComp : availableAnnual;
+            let secondBalance = useCompFirst ? availableAnnual : availableComp;
+
+            const firstHours = Math.min(firstBalance, remaining);
+            pushItem(firstType, firstHours);
+            remaining -= firstHours;
+
+            const secondHours = Math.min(secondBalance, remaining);
+            pushItem(secondType, secondHours);
+            remaining -= secondHours;
+
+            if (remaining > 0) pushItem('事假', remaining);
+            return preview;
+        }
+
+        function buildAllocationSummary(preview) {
+            return preview.map((item) => `${item.type} ${Number(item.hours || 0).toFixed(3)} 小時`).join('、');
+        }
+
+        function updateLeaveFormMode() {
+            const mode = document.getElementById('leave-mode')?.value || 'hourly';
+            const fullWrap = document.getElementById('leave-full-day-fields');
+            const halfWrap = document.getElementById('leave-half-day-fields');
+            const hourlyWrap = document.getElementById('leave-hourly-fields');
+            if (fullWrap) fullWrap.classList.toggle('hidden', mode !== 'full_day');
+            if (halfWrap) halfWrap.classList.toggle('hidden', mode !== 'half_day');
+            if (hourlyWrap) hourlyWrap.classList.toggle('hidden', mode !== 'hourly');
+            updateLeavePreview();
+        }
+
+        async function updateLeavePreview() {
+            const box = document.getElementById('leave-preview');
+            if (!box) return;
+
+            const type = document.getElementById('leave-type')?.value || '特休';
+            const mode = document.getElementById('leave-mode')?.value || 'hourly';
+            const startDate = mode === 'full_day'
+                ? document.getElementById('leave-start-date')?.value
+                : (document.getElementById('leave-single-date')?.value || document.getElementById('leave-hourly-date')?.value);
+            const endDate = mode === 'full_day'
+                ? document.getElementById('leave-end-date')?.value
+                : startDate;
+            const halfDaySlot = document.getElementById('leave-half-slot')?.value || 'am';
+            const hours = document.getElementById('leave-hours')?.value;
+
+            if (!startDate || !endDate || (mode === 'hourly' && !hours)) {
+                box.innerHTML = '<div class="text-xs text-slate-400">填寫日期與時數後，系統會顯示本次請假的拆分預覽。</div>';
+                return;
+            }
+
+            if (mode === 'full_day' && dayjs(endDate).isBefore(dayjs(startDate), 'day')) {
+                box.innerHTML = '<div class="text-xs text-rose-500">結束日期不可早於開始日期。</div>';
+                return;
+            }
+
+            const totalHours = getTotalLeaveHours(mode, startDate, endDate, hours);
+            if (!totalHours || Number.isNaN(totalHours)) {
+                box.innerHTML = '<div class="text-xs text-rose-500">請確認請假時數設定。</div>';
+                return;
+            }
+
+            const reserved = currentUser?.id ? await getReservedLeaveTotals() : { annual: 0, comp: 0 };
+            currentReservedAnnual = Number(reserved.annual.toFixed(3));
+            currentReservedComp = Number(reserved.comp.toFixed(3));
+            renderLeaveBalanceSummary();
+            const availableComp = Math.max(0, Number((currentCompBalance - reserved.comp).toFixed(3)));
+            const availableAnnual = Math.max(0, Number((currentAnnualBalance - reserved.annual).toFixed(3)));
+            const preview = calculateAllocationPreview(type, totalHours, availableComp, availableAnnual);
+            const summary = buildAllocationSummary(preview);
+            const annualAfter = Math.max(0, Number((availableAnnual - preview.filter(item => item.type === '特休').reduce((sum, item) => sum + Number(item.hours || 0), 0)).toFixed(3)));
+            const compAfter = Math.max(0, Number((availableComp - preview.filter(item => item.type === '補休').reduce((sum, item) => sum + Number(item.hours || 0), 0)).toFixed(3)));
+
+            box.innerHTML = `
+                <div class="text-xs text-slate-500 leading-6">
+                    <div><span class="font-bold text-slate-700">請假模式：</span>${getLeaveModeLabel(mode)}</div>
+                    <div><span class="font-bold text-slate-700">申請區間：</span>${mode === 'full_day' ? `${startDate} ~ ${endDate}` : startDate}${mode === 'half_day' ? ` (${getHalfDaySlotLabel(halfDaySlot)})` : ''}</div>
+                    <div><span class="font-bold text-slate-700">總時數：</span>${Number(totalHours.toFixed(3)).toFixed(3)} 小時</div>
+                    <div><span class="font-bold text-slate-700">補休餘額：</span>${Number(currentCompBalance || 0).toFixed(3)} 小時（預佔 ${Number(currentReservedComp || 0).toFixed(3)} / 可用 ${availableComp.toFixed(3)}）</div>
+                    <div><span class="font-bold text-slate-700">特休餘額：</span>${Number(currentAnnualBalance || 0).toFixed(3)} 小時（預佔 ${Number(currentReservedAnnual || 0).toFixed(3)} / 可用 ${availableAnnual.toFixed(3)}）</div>
+                    <div class="mt-2 rounded-2xl bg-white border border-amber-100 px-3 py-2 text-amber-800 font-bold">本次將拆分為：${summary}</div>
+                    <div class="mt-2 text-[11px] text-slate-400">送出後預估剩餘：補休 ${compAfter.toFixed(3)} 小時｜特休 ${annualAfter.toFixed(3)} 小時</div>
+                </div>
+            `;
+        }
+
         function loadTodayLeaves() {
-            const today = dayjs().format('YYYY-MM-DD');
             const q = query(collection(db, "requests"), 
                 where("empId", "==", currentUser.id), 
-                where("date", "==", today),
                 where("category", "==", "leave")
             );
             onSnapshot(q, (snap) => {
@@ -274,48 +508,85 @@
             });
         }
 
+        function getTodayLeaveFlags(targetDate) {
+            const flags = { full: false, start: false, end: false, middle: false };
+
+            todayLeaves.forEach((request) => {
+                if (request.status !== 'approved' && request.status !== 'pending') return;
+                getRequestCoveredSegments(request, targetDate).forEach((item) => {
+                    if (item.period === 'full') {
+                        flags.full = true;
+                        flags.start = true;
+                        flags.end = true;
+                    } else if (item.period === 'start') {
+                        flags.start = true;
+                    } else if (item.period === 'end') {
+                        flags.end = true;
+                    } else if (item.period === 'middle') {
+                        flags.middle = true;
+                    }
+                });
+            });
+
+            return flags;
+        }
+
+        function renderLeaveStatusButton(button, title, subtitle) {
+            button.className = "p-4 rounded-2xl shadow-sm flex flex-col items-center justify-center gap-2 border-b-4 border-emerald-200 h-36 sm:h-32 transition bg-emerald-50 text-emerald-700";
+            button.innerHTML = `
+                <span class="text-3xl">🗓️</span>
+                <div class="font-bold">${title}</div>
+                <div class="text-[10px] text-emerald-600">${subtitle}</div>
+            `;
+            button.onclick = null;
+        }
+
         function updateClockUI() {
             const now = dayjs();
             const todayStr = now.format('YYYY-MM-DD');
             const startLimit = dayjs(`${todayStr} ${systemSettings.workStartTime}`).add(systemSettings.clockBuffer, 'minute');
             const endLimit = dayjs(`${todayStr} ${systemSettings.workEndTime}`);
-
-            const exemptStart = todayLeaves.some(r => (r.status === 'approved' || r.status === 'pending') && (r.period === 'start' || r.period === 'full'));
-            const exemptEnd = todayLeaves.some(r => (r.status === 'approved' || r.status === 'pending') && (r.period === 'end' || r.period === 'full'));
-
-            const startText = exemptStart ? `<div class="text-[10px] text-blue-200 mt-1">✨ 已申請請假 (允許打卡)</div>` : "";
-            const endText = exemptEnd ? `<div class="text-[10px] text-blue-200 mt-1">✨ 已申請請假 (允許打卡)</div>` : "";
+            const leaveFlags = getTodayLeaveFlags(todayStr);
+            const middleHint = leaveFlags.middle ? `<div class="text-[10px] text-amber-200 mt-1">今日有中途請假申請</div>` : "";
 
             const inBtn = document.getElementById('btn-clock-in');
             if (todayAttendance && todayAttendance.inTime) {
-                inBtn.className = "p-4 rounded-2xl shadow-sm flex flex-col items-center justify-center gap-2 border-b-4 h-32 transition status-done bg-slate-100";
-                inBtn.innerHTML = `<span class="text-3xl grayscale">🌞</span><div class="font-bold text-slate-500">已簽到 ${todayAttendance.inTime}</div><div class="text-[10px] text-slate-400">${todayAttendance.location || '公司'}</div>`;
+                inBtn.className = "p-4 rounded-2xl shadow-sm flex flex-col items-center justify-center gap-2 border-b-4 h-36 sm:h-32 transition status-done bg-slate-100";
+                inBtn.innerHTML = `<span class="text-3xl grayscale">✅</span><div class="font-bold text-slate-500">已簽到 ${todayAttendance.inTime}</div><div class="text-[10px] text-slate-400">${todayAttendance.location || '公司'}</div>`;
                 inBtn.onclick = null;
             } else {
-                if (now.isAfter(startLimit) && !exemptStart) {
-                    inBtn.className = "p-4 rounded-2xl shadow-md flex flex-col items-center justify-center gap-2 border-b-4 h-32 transition cursor-pointer status-late btn-press";
-                    inBtn.innerHTML = `<span class="text-3xl">⚠️</span><span class="font-bold">申請補登</span><span class="text-[10px]">已過上班時間</span>`;
+                if (leaveFlags.full) {
+                    renderLeaveStatusButton(inBtn, "今日已請假", "本日無需簽到");
+                } else if (leaveFlags.start) {
+                    renderLeaveStatusButton(inBtn, "上午已請假", "本時段無需簽到");
+                } else if (now.isAfter(startLimit)) {
+                    inBtn.className = "p-4 rounded-2xl shadow-md flex flex-col items-center justify-center gap-2 border-b-4 h-36 sm:h-32 transition cursor-pointer status-late btn-press";
+                    inBtn.innerHTML = `<span class="text-3xl">⚠️</span><span class="font-bold">申請補卡</span><span class="text-[10px]">請改送上班補登</span>`;
                     inBtn.onclick = () => sendCorrectionRequest('上班', todayStr, now.format('HH:mm'));
                 } else {
-                    inBtn.className = "bg-blue-500 p-4 rounded-2xl shadow-lg flex flex-col items-center justify-center gap-2 btn-press border-b-4 border-blue-700 h-32 cursor-pointer transition text-white";
-                    inBtn.innerHTML = `<span class="text-4xl">🌞</span><span class="font-bold">上班打卡</span>${startText}`;
+                    inBtn.className = "bg-blue-500 p-4 rounded-2xl shadow-lg flex flex-col items-center justify-center gap-2 btn-press border-b-4 border-blue-700 h-36 sm:h-32 cursor-pointer transition text-white";
+                    inBtn.innerHTML = `<span class="text-4xl">🕘</span><span class="font-bold">上班打卡</span>${middleHint}`;
                     inBtn.onclick = clockIn;
                 }
             }
 
             const outBtn = document.getElementById('btn-clock-out');
             if (todayAttendance && todayAttendance.outTime) {
-                outBtn.className = "p-4 rounded-2xl shadow-sm flex flex-col items-center justify-center gap-2 border-b-4 h-32 transition status-done bg-slate-100";
-                outBtn.innerHTML = `<span class="text-3xl grayscale">🌙</span><div class="font-bold text-slate-500">已簽退 ${todayAttendance.outTime}</div><div class="text-[10px] text-slate-400">${todayAttendance.locationOut || todayAttendance.location || '公司'}</div>`;
+                outBtn.className = "p-4 rounded-2xl shadow-sm flex flex-col items-center justify-center gap-2 border-b-4 h-36 sm:h-32 transition status-done bg-slate-100";
+                outBtn.innerHTML = `<span class="text-3xl grayscale">✅</span><div class="font-bold text-slate-500">已簽退 ${todayAttendance.outTime}</div><div class="text-[10px] text-slate-400">${todayAttendance.locationOut || todayAttendance.location || '公司'}</div>`;
                 outBtn.onclick = null;
             } else {
-                if (now.isBefore(endLimit) && !exemptEnd) {
-                    outBtn.className = "p-4 rounded-2xl shadow-md flex flex-col items-center justify-center gap-2 border-b-4 h-32 transition cursor-pointer status-late btn-press";
-                    outBtn.innerHTML = `<span class="text-3xl">⚠️</span><span class="font-bold">申請補登</span><span class="text-[10px]">尚未到下班時間</span>`;
+                if (leaveFlags.full) {
+                    renderLeaveStatusButton(outBtn, "今日已請假", "本日無需簽退");
+                } else if (leaveFlags.end) {
+                    renderLeaveStatusButton(outBtn, "下午已請假", "本時段無需簽退");
+                } else if (now.isBefore(endLimit)) {
+                    outBtn.className = "p-4 rounded-2xl shadow-md flex flex-col items-center justify-center gap-2 border-b-4 h-36 sm:h-32 transition cursor-pointer status-late btn-press";
+                    outBtn.innerHTML = `<span class="text-3xl">⚠️</span><span class="font-bold">申請補卡</span><span class="text-[10px]">提早離開請改送請假</span>`;
                     outBtn.onclick = () => sendCorrectionRequest('下班', todayStr, now.format('HH:mm'));
                 } else {
-                    outBtn.className = "bg-slate-700 p-4 rounded-2xl shadow-lg flex flex-col items-center justify-center gap-2 btn-press border-b-4 border-slate-900 h-32 cursor-pointer transition text-white";
-                    outBtn.innerHTML = `<span class="text-4xl">🌙</span><span class="font-bold">下班打卡</span>${endText}`;
+                    outBtn.className = "bg-slate-700 p-4 rounded-2xl shadow-lg flex flex-col items-center justify-center gap-2 btn-press border-b-4 border-slate-900 h-36 sm:h-32 cursor-pointer transition text-white";
+                    outBtn.innerHTML = `<span class="text-4xl">🕕</span><span class="font-bold">下班打卡</span>${middleHint}`;
                     outBtn.onclick = clockOut;
                 }
             }
@@ -352,7 +623,12 @@
 
         async function sendCorrectionRequest(type, date, time) {
             if (type === '下班' && confirm("您現在是「早退」嗎？\n\n按「確定」填寫請假單。\n按「取消」發送補登申請。")) {
-                openModal('modal-leave'); document.getElementById('leave-period').value = 'end'; return;
+                openModal('modal-leave');
+                document.getElementById('leave-mode').value = 'half_day';
+                document.getElementById('leave-single-date').value = date;
+                document.getElementById('leave-half-slot').value = 'pm';
+                updateLeaveFormMode();
+                return;
             }
             if(!confirm(`⚠️ 確定發送「${type}補登」給管理員？`)) return;
             try {
@@ -366,18 +642,65 @@
         }
 
         async function submitLeave() {
-            const date = document.getElementById('leave-date').value;
-            const hours = document.getElementById('leave-hours').value;
             const type = document.getElementById('leave-type').value;
-            const period = document.getElementById('leave-period').value;
+            const leaveMode = document.getElementById('leave-mode').value;
+            const startDate = leaveMode === 'full_day'
+                ? document.getElementById('leave-start-date').value
+                : (document.getElementById('leave-single-date').value || document.getElementById('leave-hourly-date').value);
+            const endDate = leaveMode === 'full_day'
+                ? document.getElementById('leave-end-date').value
+                : startDate;
+            const halfDaySlot = document.getElementById('leave-half-slot').value;
+            const hours = document.getElementById('leave-hours').value;
             const note = document.getElementById('leave-note').value;
-            if(!date || !hours || !period) return alert("請填寫完整");
-            if (parseFloat(hours) % 0.5 !== 0) return alert("❌ 時數必須是 0.5 的倍數");
+            if (!startDate || !endDate) return alert("請填寫完整日期");
+            if (leaveMode === 'half_day' && !halfDaySlot) return alert("請選擇上午或下午");
+            if (leaveMode === 'hourly' && !hours) return alert("請填寫請假時數");
+            if (leaveMode === 'hourly' && parseFloat(hours) % 0.5 !== 0) return alert("❌ 時數必須是 0.5 的倍數");
+            if (leaveMode === 'full_day' && dayjs(endDate).isBefore(dayjs(startDate), 'day')) return alert("結束日期不可早於開始日期");
+
+            const totalHours = getTotalLeaveHours(leaveMode, startDate, endDate, hours);
+            const dateBreakdown = getLeaveBreakdown(leaveMode, startDate, endDate, halfDaySlot, hours);
+            const reserved = await getReservedLeaveTotals();
+            const availableComp = Math.max(0, Number((currentCompBalance - reserved.comp).toFixed(3)));
+            const availableAnnual = Math.max(0, Number((currentAnnualBalance - reserved.annual).toFixed(3)));
+            const allocationPreview = calculateAllocationPreview(type, totalHours, availableComp, availableAnnual);
+            const allocationSummary = buildAllocationSummary(allocationPreview);
+            const requestDateLabel = getLeaveDateLabel({ startDate, endDate });
+            const period = dateBreakdown[0]?.period || 'middle';
+            const slotText = leaveMode === 'half_day' ? ` (${getHalfDaySlotLabel(halfDaySlot)})` : '';
+
+            if (!confirm(`本次請假共 ${Number(totalHours.toFixed(3)).toFixed(3)} 小時。\n系統將拆分為：${allocationSummary}\n\n確認送出嗎？`)) return;
 
             await addDoc(collection(db, "requests"), {
-                empId: currentUser.id, name: currentUser.name, category: "leave", type, date, hours: Number(hours), period, note, status: "pending", createdBy: currentUser.id, createdAt: new Date().toISOString()
+                empId: currentUser.id,
+                name: currentUser.name,
+                category: "leave",
+                type,
+                requestedType: type,
+                leaveMode,
+                startDate,
+                endDate,
+                halfDaySlot: leaveMode === 'half_day' ? halfDaySlot : null,
+                dateBreakdown,
+                allocationPreview,
+                reservationStatus: "reserved",
+                requestDateLabel: `${requestDateLabel}${slotText}`,
+                date: `${requestDateLabel}${slotText}`,
+                hours: Number(totalHours.toFixed(3)),
+                requestedHours: Number(totalHours.toFixed(3)),
+                period,
+                note,
+                status: "pending",
+                createdBy: currentUser.id,
+                createdAt: new Date().toISOString()
             });
-            closeModal('modal-leave'); alert("已送出"); loadRequests(); sendNotification(`🌴 [請假] ${currentUser.name} ${date} (${hours}H)`);
+            closeModal('modal-leave');
+            refreshReservedLeaveSummary();
+            updateLeavePreview();
+            alert(`已送出請假申請。\n本次拆分：${allocationSummary}`);
+            loadRequests();
+            sendNotification(`🌴 [請假] ${currentUser.name} ${requestDateLabel}${slotText} (${Number(totalHours.toFixed(3)).toFixed(3)}H)`);
         }
 
         async function submitOvertime() {
@@ -393,32 +716,138 @@
 
         function switchRequestTab(tab) {
             currentTab = tab;
-            document.getElementById('tab-my').className = tab === 'my' ? 'flex-1 text-center py-2 font-bold cursor-pointer tab-active' : 'flex-1 text-center py-2 font-bold cursor-pointer tab-inactive hover:bg-slate-100';
-            document.getElementById('tab-proxy').className = tab === 'proxy' ? 'flex-1 text-center py-2 font-bold cursor-pointer tab-active' : 'flex-1 text-center py-2 font-bold cursor-pointer tab-inactive hover:bg-slate-100';
+            document.getElementById('tab-my').className = tab === 'my' ? 'text-center py-2.5 font-bold cursor-pointer rounded-xl tab-active bg-blue-50' : 'text-center py-2.5 font-bold cursor-pointer rounded-xl tab-inactive hover:bg-slate-100';
+            document.getElementById('tab-proxy').className = tab === 'proxy' ? 'text-center py-2.5 font-bold cursor-pointer rounded-xl tab-active bg-blue-50' : 'text-center py-2.5 font-bold cursor-pointer rounded-xl tab-inactive hover:bg-slate-100';
+            const hint = document.getElementById('request-tab-hint');
+            if (hint) {
+                hint.innerText = tab === 'my'
+                    ? '顯示你自己送出的請假與加班申請。'
+                    : '只顯示你代他人送出的請假單進度。';
+            }
             loadRequests();
         }
 
+        function changeRequestMonth() {
+            const input = document.getElementById('request-filter-month');
+            requestFilterMonth = input?.value || dayjs().format('YYYY-MM');
+            loadRequests();
+        }
+
+        function changeRequestStatus() {
+            const input = document.getElementById('request-filter-status');
+            requestFilterStatus = input?.value || 'all';
+            loadRequests();
+        }
+
+        async function deleteRequest(id) {
+            if (!confirm("刪除此申請？")) return;
+            const snap = await getDoc(doc(db, "requests", id));
+            if (!snap.exists()) return alert("找不到申請資料");
+
+            const data = snap.data();
+            const searchIds = [currentUser.id];
+            if (currentUser.code) searchIds.push(currentUser.code);
+            const isOwner = searchIds.includes(data.empId) || searchIds.includes(data.createdBy);
+
+            if (!isOwner) return alert("您只能刪除自己的申請");
+            if (data.status !== 'pending') return alert("只有待審核的申請可以刪除");
+
+            await deleteDoc(doc(db, "requests", id));
+            refreshReservedLeaveSummary();
+        }
+        
         function loadRequests() {
             const searchIds = [currentUser.id];
             if (currentUser.code) searchIds.push(currentUser.code);
-            let q = currentTab === 'my' ? query(collection(db, "requests"), where("empId", "in", searchIds)) : query(collection(db, "requests"), where("createdBy", "in", searchIds));
+            if (unsubscribeRequests) { unsubscribeRequests(); unsubscribeRequests = null; }
+
+            const monthInput = document.getElementById('request-filter-month');
+            const statusInput = document.getElementById('request-filter-status');
+            if (monthInput && !monthInput.value) monthInput.value = requestFilterMonth;
+            if (statusInput && !statusInput.value) statusInput.value = requestFilterStatus;
+
+            const q = currentTab === 'my'
+                ? query(collection(db, "requests"), where("empId", "in", searchIds))
+                : query(collection(db, "requests"), where("createdBy", "in", searchIds));
             
-            onSnapshot(q, (snap) => {
-                const list = document.getElementById('request-list'); list.innerHTML = "";
-                let recs = []; snap.forEach(d => recs.push({id: d.id, ...d.data()}));
-                recs.sort((a,b) => dayjs(b.createdAt).unix() - dayjs(a.createdAt).unix());
-                if(recs.length===0) { list.innerHTML = `<div class="text-center text-gray-400 py-10 bg-white rounded-xl border border-dashed border-gray-300">尚無紀錄</div>`; return; }
+            unsubscribeRequests = onSnapshot(q, (snap) => {
+                const list = document.getElementById('request-list');
+                list.innerHTML = "";
+                refreshReservedLeaveSummary();
+
+                let recs = [];
+                snap.forEach(d => recs.push({ id: d.id, ...d.data() }));
+
+                recs = recs.filter((r) => {
+                    const isOwnVisibleRequest = currentTab === 'my' && (r.category === 'leave' || r.category === 'overtime');
+                    const isProxyVisibleRequest = currentTab === 'proxy' && r.category === 'leave';
+                    const isOwnRequest = searchIds.includes(r.empId) && searchIds.includes(r.createdBy);
+                    const isProxyRequest = !searchIds.includes(r.empId) && searchIds.includes(r.createdBy);
+                    const monthSource = r.date || r.createdAt;
+                    const monthMatched = dayjs(monthSource).isValid()
+                        ? dayjs(monthSource).format('YYYY-MM') === requestFilterMonth
+                        : true;
+                    const statusMatched = requestFilterStatus === 'all' || r.status === requestFilterStatus;
+                    const tabMatched = currentTab === 'my' ? isOwnRequest : isProxyRequest;
+                    const categoryMatched = currentTab === 'my' ? isOwnVisibleRequest : isProxyVisibleRequest;
+                    return categoryMatched && tabMatched && monthMatched && statusMatched;
+                });
+
+                recs.sort((a, b) => dayjs(b.createdAt).unix() - dayjs(a.createdAt).unix());
+
+                if (recs.length === 0) {
+                    const emptyText = currentTab === 'my'
+                        ? `${requestFilterMonth} 沒有符合條件的請假/加班申請。`
+                        : `${requestFilterMonth} 沒有符合條件的代辦追蹤紀錄。`;
+                    list.innerHTML = `<div class="request-shell text-center text-gray-400 py-10 px-4"><div class="text-2xl mb-2">🗂️</div><div class="text-sm font-bold text-slate-500">${emptyText}</div></div>`;
+                    return;
+                }
                 
                 recs.forEach(r => {
-                    const statusIcon = r.status==='approved'?'✅':(r.status==='rejected'?'❌':'⏳');
-                    let title = r.category === 'correction' ? `補登: ${r.type}` : (r.category === 'leave' ? `請假: ${r.type}` : '加班');
-                    list.innerHTML += `<div class="bg-white p-3 rounded-xl border mb-2 flex justify-between items-center"><div><div class="font-bold text-slate-700 text-sm">${statusIcon} ${title} ${r.date}</div><div class="text-xs text-slate-400">${r.hours}H ${r.note||''}</div></div><button onclick="deleteRequest('${r.id}')" class="text-xs text-red-300 px-2">刪除</button></div>`;
+                    const dateLabel = getLeaveDateLabel(r);
+                    const hoursLabel = Number(r.requestedHours ?? r.hours ?? 0).toFixed(3);
+                    const allocationLine = r.category === 'leave' && Array.isArray(r.allocationPreview) && r.allocationPreview.length > 0
+                        ? `<div class="text-[11px] text-amber-700 mt-2">拆分預覽：${buildAllocationSummary(r.allocationPreview)}</div>`
+                        : '';
+                    const leaveModeLine = r.category === 'leave'
+                        ? `<div class="text-[11px] text-slate-400 mt-1">請假模式：${getLeaveModeLabel(r.leaveMode)}${r.leaveMode === 'half_day' && r.halfDaySlot ? ` ｜ ${getHalfDaySlotLabel(r.halfDaySlot)}` : ''}</div>`
+                        : '';
+                    const statusText = r.status === 'approved'
+                        ? '已通過'
+                        : (r.status === 'rejected'
+                            ? '已拒絕'
+                            : (r.status === 'revoked' ? '已撤銷' : '待審核'));
+                    const statusBadge = r.status === 'approved'
+                        ? '<span class="px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-700">已通過</span>'
+                        : (r.status === 'rejected'
+                            ? '<span class="px-3 py-1 rounded-full text-xs font-bold bg-rose-100 text-rose-700">已拒絕</span>'
+                            : (r.status === 'revoked'
+                                ? '<span class="px-3 py-1 rounded-full text-xs font-bold bg-slate-200 text-slate-600">已撤銷</span>'
+                                : '<span class="px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-700">待審核</span>'));
+                    const reviewLine = r.reviewedAt
+                        ? `<div class="text-[11px] text-slate-400 mt-1">審核時間：${dayjs(r.reviewedAt).isValid() ? dayjs(r.reviewedAt).format('YYYY-MM-DD HH:mm') : r.reviewedAt}</div>`
+                        : '';
+                    const revokedLine = r.revokedAt
+                        ? `<div class="text-[11px] text-slate-400 mt-1">撤銷時間：${dayjs(r.revokedAt).isValid() ? dayjs(r.revokedAt).format('YYYY-MM-DD HH:mm') : r.revokedAt}</div>`
+                        : '';
+                    const rejectLine = r.rejectReason
+                        ? `<div class="text-[11px] text-red-500 mt-1">退回原因：${r.rejectReason}</div>`
+                        : '';
+                    const actionButton = r.status === 'pending'
+                        ? `<button onclick="deleteRequest('${r.id}')" class="px-3 py-1.5 rounded-full text-xs font-bold text-red-500 border border-red-200 bg-white hover:bg-red-50">刪除</button>`
+                        : '';
+
+                    if (currentTab === 'proxy') {
+                        list.innerHTML += `<div class="request-shell p-4 mb-3"><div class="flex flex-wrap items-start justify-between gap-3"><div><div class="text-lg font-bold text-slate-800">${r.proxyForName || r.name || '-'}</div><div class="text-sm text-slate-500 mt-1">${dateLabel} ｜ ${r.type || '-'} ｜ ${hoursLabel} 小時</div>${leaveModeLine}${allocationLine}</div><div class="flex items-center gap-2">${statusBadge}${actionButton}</div></div><div class="mt-3 flex flex-wrap gap-2 text-[11px]"><span class="inline-flex items-center rounded-full bg-blue-50 px-3 py-1 font-bold text-blue-600">代申請人：${r.createdByName || currentUser.name || currentUser.code || '-'}</span></div>${reviewLine}${revokedLine}${rejectLine}</div>`;
+                        return;
+                    }
+
+                    const ownTitle = r.category === 'overtime' ? '加班申請' : (r.type || '請假');
+                    list.innerHTML += `<div class="request-shell p-4 mb-3"><div class="flex items-start justify-between gap-3"><div class="min-w-0"><div class="text-base font-black text-slate-800">${ownTitle}</div><div class="text-sm text-slate-500 mt-1">${dateLabel} ｜ ${hoursLabel} 小時</div>${leaveModeLine}${allocationLine}</div><div class="shrink-0">${statusBadge}</div></div><div class="text-xs text-slate-400 mt-3">狀態：${statusText}</div><div class="text-sm text-slate-600 mt-1">${r.note || '未填寫事由'}</div>${reviewLine}${revokedLine}${rejectLine}${actionButton ? `<div class="mt-3">${actionButton}</div>` : ''}</div>`;
                 });
             });
         }
 
-        async function deleteRequest(id) { if(confirm("刪除此申請？")) await deleteDoc(doc(db,"requests",id)); }
-        
         function switchLocation(type) {
             currentLocationType = type;
             document.getElementById('btn-loc-office').className = type === 'office' ? 'flex-1 py-1 text-center bg-blue-600 text-white rounded-lg text-sm font-bold shadow' : 'flex-1 py-1 text-center text-slate-500 hover:bg-slate-100 rounded-lg text-sm font-bold';
@@ -427,10 +856,7 @@
         }
 
         function checkPeriodAutoFill() {
-            const period = document.getElementById('leave-period').value;
-            const hoursInput = document.getElementById('leave-hours');
-            if (period === 'full') { hoursInput.value = 8; hoursInput.disabled = true; hoursInput.classList.add('bg-gray-100'); }
-            else { hoursInput.disabled = false; hoursInput.classList.remove('bg-gray-100'); if (hoursInput.value == 8) hoursInput.value = ''; }
+            updateLeavePreview();
         }
 
         setInterval(() => { 
@@ -442,14 +868,17 @@
 <body class="flex flex-col h-screen">
 
     <div id="loading-screen" class="fixed inset-0 bg-slate-100 z-50 flex flex-col items-center justify-center text-slate-400">
-        <div class="text-xl font-bold animate-pulse">系統連線中...</div>
+        <img src="logo_02.png" alt="光祐居家長期照顧機構" class="w-40 max-w-[60vw] mb-6 opacity-95">
+        <div class="text-xl font-bold animate-pulse text-slate-600">系統連線中...</div>
+        <div class="text-xs text-slate-400 mt-2 tracking-[0.2em]">KUANG YOU CARE</div>
     </div>
 
     <div id="login-panel" class="absolute inset-0 bg-slate-50 z-40 flex flex-col items-center justify-center p-6 hidden">
         <div class="bg-white p-8 rounded-3xl w-full max-w-sm shadow-xl border border-slate-100 text-center">
-            <div class="text-5xl mb-4">👋</div>
+            <img src="logo_03.png" alt="光祐居家長期照顧機構" class="w-40 max-w-full mx-auto mb-5">
+            <div class="text-[11px] font-bold tracking-[0.35em] text-slate-400 mb-2">KUANG YOU CARE</div>
             <h1 class="text-2xl font-black text-slate-800 mb-2">員工打卡入口</h1>
-            <p class="text-slate-400 text-sm mb-8">請輸入您的員工編號</p>
+            <p class="text-slate-400 text-sm mb-8">請輸入您的員工編號與密碼</p>
             
             <input type="text" id="login-code" class="w-full p-4 border-2 border-slate-200 rounded-2xl mb-4 bg-slate-50 text-center font-bold text-xl outline-none focus:border-blue-500 focus:bg-white transition login-input" placeholder="A001">
             <input type="password" id="login-password" class="w-full p-4 border-2 border-slate-200 rounded-2xl mb-6 bg-slate-50 text-center font-bold text-xl outline-none focus:border-blue-500 focus:bg-white transition login-input" placeholder="密碼">
@@ -460,23 +889,51 @@
     </div>
 
     <div id="main-panel" class="flex-1 flex flex-col hidden overflow-hidden">
-        <div class="bg-white p-4 pb-4 border-b shadow-sm relative z-10">
-            <div class="flex justify-between items-center mb-2">
-                <div class="flex items-center gap-2"><div class="bg-blue-100 p-2 rounded-full text-blue-600 font-bold">👤</div><div class="text-lg font-bold text-slate-800" id="welcome-name">---</div></div>
-                <div class="flex gap-2">
-                    <button onclick="openModal('modal-password')" class="text-slate-500 text-xs border px-2 py-1 rounded hover:bg-slate-50">⚙️ 密碼</button>
-                    <button onclick="logout()" class="text-slate-400 text-xs border px-2 py-1 rounded">登出</button>
+        <div class="bg-white p-4 border-b shadow-sm relative z-10">
+            <div class="bg-gradient-to-br from-white via-slate-50 to-blue-50 border border-slate-100 rounded-[28px] p-4 shadow-sm">
+                <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
+                    <div class="flex items-center gap-3 min-w-0">
+                        <img src="logo_02.png" alt="光祐" class="h-11 w-auto shrink-0">
+                        <div class="min-w-0">
+                            <div class="text-[11px] font-bold tracking-[0.28em] text-slate-400">STAFF PORTAL</div>
+                            <div class="text-lg font-black text-slate-800 truncate" id="welcome-name">---</div>
+                            <div class="text-xs text-slate-500 mt-1">行政打卡與請假申請入口</div>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 w-full sm:w-auto shrink-0">
+                        <button onclick="openModal('modal-password')" class="text-slate-500 text-xs border border-slate-200 bg-white px-3 py-2 rounded-full hover:bg-slate-50">密碼</button>
+                        <button onclick="logout()" class="text-slate-400 text-xs border border-slate-200 bg-white px-3 py-2 rounded-full">登出</button>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-[1.2fr,1fr] gap-3 items-stretch">
+                    <div class="rounded-2xl bg-slate-900 text-white px-4 py-4 shadow-lg shadow-slate-200">
+                        <div class="text-[11px] font-bold tracking-[0.22em] text-slate-300 mb-2">CURRENT TIME</div>
+                        <div id="clock-display" class="text-3xl font-mono font-black leading-none">00:00:00</div>
+                        <div id="date-display" class="text-xs text-slate-300 mt-2">----/--/--</div>
+                    </div>
+
+                    <div class="grid grid-cols-2 sm:grid-cols-1 sm:grid-rows-2 gap-3">
+                        <div class="bg-blue-50 px-3 py-3 rounded-2xl border border-blue-100">
+                            <div class="text-[11px] text-blue-400 font-bold tracking-[0.18em]">特休餘額</div>
+                            <div id="bal-annual" class="text-2xl font-black text-blue-600 mt-1">-</div>
+                            <div id="bal-annual-sub" class="text-[11px] text-blue-400 mt-1">可用 0H ｜ 預佔 0H</div>
+                        </div>
+                        <div class="bg-purple-50 px-3 py-3 rounded-2xl border border-purple-100">
+                            <div class="text-[11px] text-purple-400 font-bold tracking-[0.18em]">補休餘額</div>
+                            <div id="bal-comp" class="text-2xl font-black text-purple-600 mt-1">-</div>
+                            <div id="bal-comp-sub" class="text-[11px] text-purple-400 mt-1">可用 0H ｜ 預佔 0H</div>
+                        </div>
+                    </div>
                 </div>
             </div>
-            
-            <div class="grid grid-cols-2 gap-3 mb-2">
-                <div class="bg-blue-50 p-2 rounded-lg text-center border border-blue-100"><div class="text-xs text-blue-400 font-bold">特休餘額</div><div id="bal-annual" class="text-xl font-black text-blue-600">-</div></div>
-                <div class="bg-purple-50 p-2 rounded-lg text-center border border-purple-100"><div class="text-xs text-purple-400 font-bold">補休餘額</div><div id="bal-comp" class="text-xl font-black text-purple-600">-</div></div>
-            </div>
-            <div class="text-center"><div id="clock-display" class="text-3xl font-mono font-black text-slate-700">00:00:00</div><div id="date-display" class="text-xs text-slate-400">----/--/--</div></div>
         </div>
 
         <div class="p-4 bg-slate-100 shrink-0">
+            <div class="mb-3">
+                <div class="text-[11px] font-bold tracking-[0.24em] text-slate-400 mb-1">CLOCK ACTION</div>
+                <div class="text-sm font-bold text-slate-700">打卡與外勤設定</div>
+            </div>
             <div class="bg-white p-1 rounded-xl flex mb-3 shadow-sm">
                 <button id="btn-loc-office" onclick="switchLocation('office')" class="flex-1 py-1 text-center bg-blue-600 text-white rounded-lg text-sm font-bold shadow transition">🏢 公司內</button>
                 <button id="btn-loc-field" onclick="switchLocation('field')" class="flex-1 py-1 text-center text-slate-500 hover:bg-slate-100 rounded-lg text-sm font-bold transition">🚗 外勤/外訪</button>
@@ -490,14 +947,31 @@
         </div>
 
         <div class="px-4 mt-2 grid grid-cols-2 gap-3 shrink-0">
-            <button onclick="openModal('modal-ot')" class="bg-orange-50 p-3 rounded-xl border border-orange-100 text-orange-700 font-bold text-sm">⚡ 申請加班</button>
-            <button onclick="openModal('modal-leave')" class="bg-green-50 p-3 rounded-xl border border-green-100 text-green-700 font-bold text-sm">🌴 申請請假</button>
+            <button onclick="openModal('modal-ot')" class="bg-orange-50 p-3.5 rounded-2xl border border-orange-100 text-orange-700 font-bold text-sm shadow-sm">⚡ 申請加班</button>
+            <button onclick="openModal('modal-leave')" class="bg-green-50 p-3.5 rounded-2xl border border-green-100 text-green-700 font-bold text-sm shadow-sm">🌴 申請請假</button>
         </div>
 
         <div class="flex-1 overflow-y-auto px-4 mt-4 pb-6 flex flex-col">
-            <div class="flex border-b border-slate-200 mb-3 text-sm">
-                <div id="tab-my" onclick="switchRequestTab('my')" class="flex-1 text-center py-2 font-bold cursor-pointer tab-active">我的申請</div>
-                <div id="tab-proxy" onclick="switchRequestTab('proxy')" class="hidden flex-1 text-center py-2 font-bold cursor-pointer tab-inactive">代辦追蹤</div>
+            <div class="mb-3">
+                <div class="text-[11px] font-bold tracking-[0.24em] text-slate-400 mb-1">REQUEST CENTER</div>
+                <div class="text-sm font-bold text-slate-700">申請與代辦進度</div>
+                <div id="request-tab-hint" class="text-xs text-slate-400 mt-1">查看個人請假/加班申請與代辦追蹤。</div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2 bg-white rounded-2xl p-1 shadow-sm border border-slate-100 mb-3 text-sm">
+                <div id="tab-my" onclick="switchRequestTab('my')" class="text-center py-2.5 font-bold cursor-pointer rounded-xl tab-active">我的申請</div>
+                <div id="tab-proxy" onclick="switchRequestTab('proxy')" class="hidden text-center py-2.5 font-bold cursor-pointer rounded-xl tab-inactive">代辦追蹤</div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-[1fr,140px] gap-2 mb-3">
+                <input type="month" id="request-filter-month" onchange="changeRequestMonth()" class="w-full border rounded-2xl px-3 py-3 text-sm font-bold text-slate-600 bg-white shadow-sm">
+                <select id="request-filter-status" onchange="changeRequestStatus()" class="w-full border rounded-2xl px-3 py-3 text-sm font-bold text-slate-600 bg-white shadow-sm">
+                    <option value="all">全部狀態</option>
+                    <option value="pending">待審核</option>
+                    <option value="approved">已通過</option>
+                    <option value="rejected">已拒絕</option>
+                    <option value="revoked">已撤銷</option>
+                </select>
             </div>
             <div id="request-list" class="space-y-3 pb-safe flex-1"></div>
         </div>
@@ -507,18 +981,48 @@
         <div class="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl">
             <h3 class="font-bold mb-4 flex items-center gap-2 text-lg text-slate-800">🌴 請假申請</h3>
             <div class="space-y-3">
-                <input type="date" id="leave-date" class="w-full border rounded-xl p-3 bg-slate-50 font-bold">
-                <div class="flex gap-2">
-                    <select id="leave-type" class="w-1/2 border rounded-xl p-3 bg-slate-50 font-bold"><option value="特休">特休</option><option value="補休">補休</option><option value="病假">病假</option><option value="事假">事假</option><option value="婚假">婚假</option><option value="喪假">喪假</option><option value="公假">公假</option><option value="產假">產假</option></select>
-                    <input type="number" id="leave-hours" class="w-1/2 border rounded-xl p-3 bg-slate-50 font-bold" placeholder="時數">
-                </div>
-                <select id="leave-period" class="w-full border rounded-xl p-2 mb-2 text-sm bg-blue-50 font-bold text-blue-800" onchange="checkPeriodAutoFill()">
-                    <option value="start">🌞 上班段 (晚到)</option>
-                    <option value="end">🌙 下班段 (早退)</option>
-                    <option value="full">📅 整日 (8H)</option>
-                    <option value="middle">⚡ 中途外出</option>
+                <select id="leave-type" class="w-full border rounded-xl p-3 bg-slate-50 font-bold" onchange="updateLeavePreview()">
+                    <option value="特休">特休</option>
+                    <option value="補休">補休</option>
+                    <option value="病假">病假</option>
+                    <option value="事假">事假</option>
+                    <option value="婚假">婚假</option>
+                    <option value="喪假">喪假</option>
+                    <option value="公假">公假</option>
+                    <option value="產假">產假</option>
                 </select>
+                <select id="leave-mode" class="w-full border rounded-xl p-3 bg-blue-50 font-bold text-blue-800" onchange="updateLeaveFormMode()">
+                    <option value="full_day">整日請假</option>
+                    <option value="half_day">半日請假</option>
+                    <option value="hourly">上班中途請假</option>
+                </select>
+
+                <div id="leave-full-day-fields" class="space-y-3">
+                    <div class="grid grid-cols-2 gap-2">
+                        <input type="date" id="leave-start-date" class="w-full border rounded-xl p-3 bg-slate-50 font-bold" onchange="updateLeavePreview()">
+                        <input type="date" id="leave-end-date" class="w-full border rounded-xl p-3 bg-slate-50 font-bold" onchange="updateLeavePreview()">
+                    </div>
+                    <div class="text-xs text-slate-400 px-1">整日請假會依區間自動換算為每天 8 小時。</div>
+                </div>
+
+                <div id="leave-half-day-fields" class="space-y-3 hidden">
+                    <input type="date" id="leave-single-date" class="w-full border rounded-xl p-3 bg-slate-50 font-bold" onchange="updateLeavePreview()">
+                    <select id="leave-half-slot" class="w-full border rounded-xl p-3 bg-slate-50 font-bold" onchange="updateLeavePreview()">
+                        <option value="am">上午半日（4 小時）</option>
+                        <option value="pm">下午半日（4 小時）</option>
+                    </select>
+                </div>
+
+                <div id="leave-hourly-fields" class="space-y-3 hidden">
+                    <input type="date" id="leave-hourly-date" class="w-full border rounded-xl p-3 bg-slate-50 font-bold" onchange="updateLeavePreview()">
+                    <input type="number" id="leave-hours" step="0.5" min="0.5" class="w-full border rounded-xl p-3 bg-slate-50 font-bold" placeholder="請輸入時數（最小 0.5 小時）" oninput="updateLeavePreview()">
+                </div>
+
                 <input type="text" id="leave-note" class="w-full border rounded-xl p-3 mb-4 text-sm" placeholder="事由">
+                <div class="rounded-2xl bg-amber-50 border border-amber-100 px-4 py-3">
+                    <div class="text-xs font-bold tracking-[0.2em] text-amber-600 mb-2">拆分預覽</div>
+                    <div id="leave-preview" class="text-sm text-slate-500 leading-6">填寫日期與時數後，系統會顯示本次請假的拆分預覽。</div>
+                </div>
                 <div class="flex gap-2 pt-4">
                     <button onclick="closeModal('modal-leave')" class="flex-1 py-3 text-slate-500 font-bold">取消</button>
                     <button onclick="submitLeave()" class="flex-1 py-3 bg-green-600 text-white rounded-xl font-bold shadow-lg">送出</button>
@@ -558,3 +1062,4 @@
     </div>
 </body>
 </html>
+

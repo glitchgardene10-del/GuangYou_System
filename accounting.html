@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>光祐會計內帳系統 (v18.1 銀行格式精準修復版)</title>
+    <title>光祐會計內帳系統 (v18.4 應收傳票防呆保護版)</title>
     
     <script src="auth-guard.js"></script>
     <script type="module" src="config.js"></script>
@@ -28,6 +28,15 @@
 
     <script type="text/babel">
         const { useState, useEffect, useMemo, useRef } = React;
+        const SAFETY_PASSWORD = "8888"; 
+
+        const maskName = (name) => {
+            if (!name) return "";
+            const len = name.length;
+            if (len === 2) return name[0] + "○"; 
+            if (len === 3) return name[0] + "○" + name[2]; 
+            return name[0] + "○○" + name.substring(3); 
+        };
 
         const AccountingApp = () => {
             const [activeTab, setActiveTab] = useState('dashboard');
@@ -92,13 +101,10 @@
                 return { totalBank, totalCashBoss, revenueThisMonth, expenseThisMonth, netProfit, profitMargin, personnelCost, personnelPercent, trend: last6Months };
             }, [journals]);
 
-            // --- ★★★ 銀行轉帳檔生成 (精準對齊修正) ★★★ ---
-            
             const getBig5Length = (str) => {
                 let len = 0;
                 for (let i = 0; i < str.length; i++) {
                     const c = str.charCodeAt(i);
-                    // 判斷是否為全形字 (中文)
                     if ((c >= 0x0001 && c <= 0x007e) || (0xff60 <= c && c <= 0xff9f)) { len++; } else { len += 2; }
                 }
                 return len;
@@ -113,40 +119,28 @@
 
                 targetEmployees.forEach(emp => {
                     if (!emp.bankAccount) return; 
-
                     const empAccount = emp.bankAccount.replace(/\D/g,''); 
-                    
-                    // ★ 修正 1：金額 13 碼 (整數11碼 + "00")，不多0了！
                     const netStr = Math.round(emp.net).toString();
                     const amountStr = netStr.padStart(11, '0') + "00"; 
-                    
                     const cleanName = emp.name.replace(/,/g, '').trim(); 
                     
-                    let line = "";
-                    line += "  "; // 2 空白
-                    line += empAccount.padEnd(13, ' '); // 13 帳號
-                    line += amountStr; // 13 金額
-                    line += "          "; // 10 空白
-                    line += cleanName; // 姓名 (可變長度)
+                    let line = "  "; 
+                    line += empAccount.padEnd(13, ' '); 
+                    line += amountStr; 
+                    line += "          "; 
+                    line += cleanName; 
                     
-                    // ★ 修正 2：利用 Big5 邏輯，精準補滿 80 Bytes，不多空格了！
                     const currentLen = getBig5Length(line);
                     const targetLen = 80; 
-                    if (currentLen < targetLen) {
-                        line += " ".repeat(targetLen - currentLen);
-                    }
+                    if (currentLen < targetLen) line += " ".repeat(targetLen - currentLen);
                     
                     lines.push(line);
                     totalAmount += emp.net;
                 });
 
-                // 組合字串，最後一定要有換行 (CRLF)
                 const fileString = lines.join("\r\n") + "\r\n";
-
-                // 純文字檔下載
                 const blob = new Blob([fileString], { type: "text/plain;charset=utf-8" });
                 saveAs(blob, `result_${dayjs().format('YYYYMMDD')}.txt`);
-                
                 alert(`✅ 已匯出 ${targetEmployees.length} 筆資料。\n\n⚠️ 【極度重要】上傳銀行前，請務必按右鍵用「記事本」開啟此檔案 -> 點選「檔案」->「另存新檔」-> 下方編碼選擇「ANSI」後存檔，才能成功上傳！`);
             };
 
@@ -159,7 +153,6 @@
                 saveAs(blob, `interbank_list_${dayjs().format('YYYYMMDD')}.txt`);
             };
 
-            // --- 薪資讀取 ---
             const fetchPayrollData = async () => {
                 const checkQ = window.query(window.collection(window.db, "accounting_journal"), window.where("source", "==", `PAYROLL_${syncMonth}`));
                 const checkSnap = await window.getDocs(checkQ);
@@ -247,18 +240,144 @@
             };
 
             const syncExpenses = async () => {
-                setLoading(true); try { const q = window.query(window.collection(window.db, "accounting_expenses"), window.where("status", "==", "pending")); const snap = await window.getDocs(q); if (snap.empty) { alert("沒有未入帳的流水帳"); setLoading(false); return; } if(!confirm(`拋轉 ${snap.size} 筆流水帳？`)) { setLoading(false); return; } let batchOps = window.writeBatch(window.db); let entries = [], totalAmount = 0, idList = []; snap.forEach(doc => { const d = doc.data(); const amount = Number(d.amount); let debitCode, creditCode; let debitName, creditName; if (d.type === 'expense') { const matchedAccount = accounts.find(acc => acc.name === d.category); if (matchedAccount) { debitCode = matchedAccount.code; debitName = matchedAccount.name; } else { debitCode = "5299"; debitName = `${d.category || '雜項'} (未分類)`; } if (d.payer === 'petty_cash') { creditCode = '1105'; creditName = '零用金'; } else if (d.payer === 'boss_paid') { creditCode = '2801'; creditName = '股東往來'; } else if (d.payer === 'bank') { creditCode = '1102'; creditName = '銀行存款'; } else { creditCode = d.payer; creditName = '其他付款'; } } else if (d.type === 'income') { debitCode = '1105'; debitName = '零用金'; creditCode = d.payer; creditName = '資金來源'; } else if (d.type === 'return') { debitCode = d.payer; debitName = '資金去向'; creditCode = '1105'; creditName = '零用金'; } entries.push({ type: 'debit', code: debitCode, name: debitName, amount }); entries.push({ type: 'credit', code: creditCode, name: creditName, amount }); totalAmount += amount; idList.push(doc.id); batchOps.update(doc.ref, { status: 'locked', lockedAt: new Date().toISOString() }); }); const journalRef = window.doc(window.collection(window.db, "accounting_journal")); batchOps.set(journalRef, { date: dayjs().format('YYYY-MM-DD'), description: `匯入行政流水帳 (${snap.size}筆)`, source: 'EXPENSE_IMPORT', entries, totalAmount, relatedExpenseIds: idList, createdAt: new Date().toISOString(), recorder: currentUser.name }); await batchOps.commit(); alert("✅ 拋轉成功！"); fetchJournals(); } catch(e) { console.error(e); alert("失敗：" + e.message); } setLoading(false);
+                setLoading(true); 
+                try { 
+                    const q = window.query(window.collection(window.db, "accounting_expenses"), window.where("status", "==", "pending")); 
+                    const snap = await window.getDocs(q); 
+                    
+                    if (snap.empty) { alert("沒有未入帳的流水帳"); setLoading(false); return; } 
+                    if(!confirm(`準備拋轉 ${snap.size} 筆流水帳，系統將依「原始發生日期」逐筆產生傳票？`)) { setLoading(false); return; } 
+                    
+                    let batchOps = window.writeBatch(window.db); 
+                    let count = 0;
+                    
+                    snap.forEach(doc => { 
+                        const d = doc.data(); 
+                        const amount = Number(d.amount); 
+                        let debitCode, creditCode, debitName, creditName; 
+                        const getAccName = (code) => { const acc = accounts.find(a => a.code === code); return acc ? acc.name : code; };
+
+                        if (d.type === 'expense') { 
+                            const matchedAccount = accounts.find(acc => acc.name === d.category); 
+                            debitCode = matchedAccount ? matchedAccount.code : "5299"; 
+                            debitName = matchedAccount ? matchedAccount.name : `${d.category || '雜項'} (未分類)`; 
+                            if (d.payer === 'petty_cash') { creditCode = '1105'; } else if (d.payer === 'boss_paid') { creditCode = '2801'; } else if (d.payer === 'bank') { creditCode = '1102'; } else { creditCode = d.payer; } 
+                            if (creditCode === '1101' && d.payer === 'petty_cash') creditCode = '1105';
+                            creditName = getAccName(creditCode);
+                        } else if (d.type === 'income') { 
+                            debitCode = '1105'; debitName = '零用金'; creditCode = d.payer; creditName = getAccName(creditCode); 
+                        } else if (d.type === 'return') { 
+                            debitCode = d.payer; debitName = getAccName(debitCode); creditCode = '1105'; creditName = '零用金'; 
+                        } 
+                        
+                        const entries = [{ type: 'debit', code: debitCode, name: debitName, amount }, { type: 'credit', code: creditCode, name: creditName, amount }];
+                        const journalRef = window.doc(window.collection(window.db, "accounting_journal")); 
+                        batchOps.set(journalRef, { date: d.date, description: `[流水帳] ${d.item}`, source: 'EXPENSE_IMPORT', entries, totalAmount: amount, relatedExpenseIds: [doc.id], createdAt: new Date().toISOString(), recorder: currentUser.name }); 
+                        batchOps.update(doc.ref, { status: 'locked', lockedAt: new Date().toISOString(), linkedJournalId: journalRef.id }); 
+                        count++;
+                    }); 
+                    await batchOps.commit(); alert(`✅ 成功依日期拋轉 ${count} 筆傳票！`); fetchJournals(); 
+                } catch(e) { console.error(e); alert("失敗：" + e.message); } 
+                setLoading(false);
             };
 
-            const deleteEntry = async (id) => { if(!confirm("確定刪除此傳票？\n如果是流水帳或帳單支付，相關紀錄將會回復(Pending/Unpaid)。")) return; setLoading(true); try { const docRef = window.doc(window.db, "accounting_journal", id); const docSnap = await window.getDoc(docRef); if (docSnap.exists()) { const data = docSnap.data(); const batch = window.writeBatch(window.db); if (data.relatedExpenseIds && data.relatedExpenseIds.length > 0) { data.relatedExpenseIds.forEach(expId => { const expRef = window.doc(window.db, "accounting_expenses", expId); batch.update(expRef, { status: 'pending', lockedAt: window.deleteField() }); }); } if (data.relatedBillId) { const billRef = window.doc(window.db, "bill_requests", data.relatedBillId); batch.update(billRef, { status: 'pending', paidAt: window.deleteField(), payer: window.deleteField(), paymentMethod: window.deleteField(), paymentSource: window.deleteField() }); } batch.delete(docRef); await batch.commit(); alert("✅ 刪除成功，相關紀錄已復原！"); fetchJournals(); } } catch(e) { console.error(e); alert("刪除失敗"); } setLoading(false); };
+            const deleteEntry = async (id) => { 
+                if(!confirm("確定刪除此傳票？\n如果是流水帳或帳單支付，相關紀錄將會回復(Pending/Unpaid)。")) return; 
+                setLoading(true); 
+                try { 
+                    const docRef = window.doc(window.db, "accounting_journal", id); 
+                    const docSnap = await window.getDoc(docRef); 
+                    if (docSnap.exists()) { 
+                        const data = docSnap.data(); 
+                        
+                        // ★ 新增防呆：禁止直接在會計端刪除應收帳款產生的傳票
+                        if (['AR_USER', 'AR_SUBSIDY', 'AR_USER_COLLECT_CASH', 'AR_GOV'].includes(data.source)) {
+                            setLoading(false);
+                            return alert("⛔ 系統保護機制：\n\n此傳票由【應收帳款 / 政府核銷】自動產生。\n請至該頁面點擊「撤銷」，系統才會安全地將現金餘額與帳單狀態一併復原，避免帳目脫鉤！");
+                        }
+
+                        const batch = window.writeBatch(window.db); 
+                        if (data.relatedExpenseIds && data.relatedExpenseIds.length > 0) { 
+                            data.relatedExpenseIds.forEach(expId => { 
+                                const expRef = window.doc(window.db, "accounting_expenses", expId); 
+                                batch.update(expRef, { status: 'pending', lockedAt: window.deleteField() }); 
+                            }); 
+                        } 
+                        if (data.relatedBillId) { 
+                            const billRef = window.doc(window.db, "bill_requests", data.relatedBillId); 
+                            batch.update(billRef, { status: 'pending', paidAt: window.deleteField(), payer: window.deleteField(), paymentMethod: window.deleteField(), paymentSource: window.deleteField() }); 
+                        } 
+                        batch.delete(docRef); 
+                        await batch.commit(); 
+                        alert("✅ 刪除成功，相關紀錄已復原！"); 
+                        fetchJournals(); 
+                    } 
+                } catch(e) { console.error(e); alert("刪除失敗"); } 
+                setLoading(false); 
+            };
+
+            const filteredJournals = useMemo(() => { return journals.filter(j => j.date.startsWith(journalFilterMonth)); }, [journals, journalFilterMonth]);
+
+            const handleBatchDeleteJournals = async () => {
+                if (filteredJournals.length === 0) return alert("本月沒有傳票可刪除。");
+                const pwd = prompt(`⚠️ 警告：您即將刪除畫面上顯示的本月 (${journalFilterMonth}) 傳票！\n\n(註：由應收帳款自動產生的傳票將被系統保護跳過)\n\n請輸入密碼確認：`);
+                if (pwd !== SAFETY_PASSWORD) return alert("❌ 密碼錯誤！");
+
+                setLoading(true);
+                try {
+                    let batch = window.writeBatch(window.db);
+                    let opCount = 0;
+                    let skippedAR = 0;
+
+                    for (const j of filteredJournals) {
+                        // ★ 新增防呆：批次刪除時自動安全略過應收款傳票
+                        if (['AR_USER', 'AR_SUBSIDY', 'AR_USER_COLLECT_CASH', 'AR_GOV'].includes(j.source)) {
+                            skippedAR++;
+                            continue;
+                        }
+
+                        const docRef = window.doc(window.db, "accounting_journal", j.id);
+                        if (j.relatedExpenseIds && j.relatedExpenseIds.length > 0) {
+                            j.relatedExpenseIds.forEach(expId => {
+                                const expRef = window.doc(window.db, "accounting_expenses", expId);
+                                batch.update(expRef, { status: 'pending', lockedAt: window.deleteField() });
+                                opCount++;
+                            });
+                        }
+                        if (j.relatedBillId) {
+                            const billRef = window.doc(window.db, "bill_requests", j.relatedBillId);
+                            batch.update(billRef, { status: 'pending', paidAt: window.deleteField(), payer: window.deleteField(), paymentMethod: window.deleteField(), paymentSource: window.deleteField() });
+                            opCount++;
+                        }
+                        
+                        batch.delete(docRef);
+                        opCount++;
+
+                        if (opCount > 400) {
+                            await batch.commit();
+                            batch = window.writeBatch(window.db);
+                            opCount = 0;
+                        }
+                    }
+                    if (opCount > 0) {
+                        await batch.commit();
+                    }
+
+                    alert(`✅ 整批刪除成功！\n已刪除並復原一般傳票。\n(系統安全略過了 ${skippedAR} 筆應收款傳票)`);
+                    fetchJournals();
+                } catch (e) {
+                    console.error(e);
+                    alert("刪除失敗：" + e.message);
+                }
+                setLoading(false);
+            };
+
             const handleRowChange = (index, field, value) => { const newRows = [...entryRows]; newRows[index][field] = value; setEntryRows(newRows); };
             const addRow = () => setEntryRows([...entryRows, { account: '', debit: 0, credit: 0 }]);
             const removeRow = (index) => setEntryRows(entryRows.filter((_, i) => i !== index));
             const saveManualEntry = async () => { if (!entryDesc) return alert("請輸入摘要"); const entries = []; let debitSum = 0, creditSum = 0; entryRows.forEach(r => { if (!r.account) return; const acc = accounts.find(a => a.code === r.account); if (Number(r.debit) > 0) { entries.push({ type: 'debit', code: r.account, name: acc?.name||'?', amount: Number(r.debit) }); debitSum += Number(r.debit); } if (Number(r.credit) > 0) { entries.push({ type: 'credit', code: r.account, name: acc?.name||'?', amount: Number(r.credit) }); creditSum += Number(r.credit); } }); if (entries.length === 0 || debitSum !== creditSum) return alert("借貸不平衡"); try { await window.addDoc(window.collection(window.db, "accounting_journal"), { date: entryDate, description: entryDesc, source: 'MANUAL', entries, totalAmount: debitSum, createdAt: new Date().toISOString(), recorder: currentUser.name }); alert("✅ 儲存成功"); setShowModal(false); fetchJournals(); } catch(e) { alert("失敗"); } };
             const ledgerData = useMemo(() => { if(!selectedAccount) return []; let balance = 0; let fullHistory = journals.sort((a,b)=>dayjs(a.date).unix()-dayjs(b.date).unix()).map(j => { const match = j.entries.find(e => e.code === selectedAccount); if(!match) return null; const d = match.type === 'debit' ? Number(match.amount) : 0; const c = match.type === 'credit' ? Number(match.amount) : 0; if(['1','5'].includes(selectedAccount[0])) balance += (d - c); else balance += (c - d); return { date: j.date, desc: j.description, source: j.source, debit: d, credit: c, balance }; }).filter(Boolean); const filterStart = ledgerFilterMonth; const startIndex = fullHistory.findIndex(r => r.date.startsWith(filterStart)); const filteredList = fullHistory.filter(r => r.date.startsWith(filterStart)); if (startIndex > 0) { filteredList.unshift({ date: `${filterStart}-01`, desc: "【期初餘額 / 承前頁】", source: "SYSTEM", debit: 0, credit: 0, balance: fullHistory[startIndex - 1].balance, isOpening: true }); } else if (startIndex === -1 && fullHistory.length > 0 && fullHistory[fullHistory.length-1].date < filterStart) { filteredList.push({ date: `${filterStart}-01`, desc: "【期初餘額】", source: "SYSTEM", debit: 0, credit: 0, balance: fullHistory[fullHistory.length-1].balance, isOpening: true }); } return filteredList; }, [journals, selectedAccount, ledgerFilterMonth]);
-            const filteredJournals = useMemo(() => { return journals.filter(j => j.date.startsWith(journalFilterMonth)); }, [journals, journalFilterMonth]);
-
-            // --- 備份與還原功能 ---
+            
             const handleBackup = async () => {
                 if(!confirm("即將下載系統完整備份檔，請確保檔案安全存放。繼續嗎？")) return;
                 setLoading(true);
@@ -269,13 +388,11 @@
                         'monthly_records', 'salary_records_admin'
                     ];
                     const backupData = {};
-                    
                     for (const colName of collectionsToBackup) {
                         const snap = await window.getDocs(window.collection(window.db, colName));
                         backupData[colName] = {};
                         snap.forEach(doc => { backupData[colName][doc.id] = doc.data(); });
                     }
-                    
                     const backupJSON = JSON.stringify({ timestamp: new Date().toISOString(), version: '1.0', data: backupData }, null, 2);
                     const blob = new Blob([backupJSON], { type: "application/json;charset=utf-8" });
                     saveAs(blob, `KuangYou_Backup_${dayjs().format('YYYYMMDD_HHmm')}.json`);
@@ -380,7 +497,25 @@
                                 </div>
                             </div>
                         )}
-                        {activeTab === 'journal' && (<div className="animate-fade-in"><div className="flex justify-between items-center mb-6"><div className="flex items-center gap-4"><h2 className="text-2xl font-bold text-slate-800">日記帳</h2><input type="month" value={journalFilterMonth} onChange={e=>setJournalFilterMonth(e.target.value)} className="border-2 border-slate-300 rounded-lg p-1 font-bold text-slate-600" /></div><button onClick={()=>setShowModal(true)} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold shadow">➕ 新增分錄</button></div><div className="bg-white rounded-xl shadow-sm border overflow-hidden">{filteredJournals.length === 0 ? <div className="p-10 text-center text-slate-400">本月尚無傳票資料</div> : filteredJournals.map(j => (<div key={j.id} className="p-6 border-b hover:bg-slate-50"><div className="flex justify-between mb-2"><span className="font-bold text-lg">{j.date} {j.description}</span><button onClick={()=>deleteEntry(j.id)} className="text-red-400 text-sm">刪除</button></div><table className="w-full text-sm"><tbody>{j.entries.map((e, idx) => (<tr key={idx}><td className="w-1/2">{e.name} <span className="text-slate-400 text-xs">({e.code})</span></td><td className="text-right w-1/4">{e.type==='debit' ? new Intl.NumberFormat().format(e.amount) : ''}</td><td className="text-right w-1/4">{e.type==='credit' ? new Intl.NumberFormat().format(e.amount) : ''}</td></tr>))}</tbody></table></div>))}</div></div>)}
+                        
+                        {activeTab === 'journal' && (
+                            <div className="animate-fade-in">
+                                <div className="flex justify-between items-center mb-6">
+                                    <div className="flex items-center gap-4">
+                                        <h2 className="text-2xl font-bold text-slate-800">日記帳</h2>
+                                        <input type="month" value={journalFilterMonth} onChange={e=>setJournalFilterMonth(e.target.value)} className="border-2 border-slate-300 rounded-lg p-1 font-bold text-slate-600" />
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <button onClick={handleBatchDeleteJournals} className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg font-bold shadow">🗑️ 整批刪除本月</button>
+                                        <button onClick={()=>setShowModal(true)} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold shadow">➕ 新增分錄</button>
+                                    </div>
+                                </div>
+                                <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+                                    {filteredJournals.length === 0 ? <div className="p-10 text-center text-slate-400">本月尚無傳票資料</div> : filteredJournals.map(j => (<div key={j.id} className="p-6 border-b hover:bg-slate-50"><div className="flex justify-between mb-2"><span className="font-bold text-lg">{j.date} {j.description}</span><button onClick={()=>deleteEntry(j.id)} className="text-red-400 text-sm">刪除</button></div><table className="w-full text-sm"><tbody>{j.entries.map((e, idx) => (<tr key={idx}><td className="w-1/2">{e.name} <span className="text-slate-400 text-xs">({e.code})</span></td><td className="text-right w-1/4">{e.type==='debit' ? new Intl.NumberFormat().format(e.amount) : ''}</td><td className="text-right w-1/4">{e.type==='credit' ? new Intl.NumberFormat().format(e.amount) : ''}</td></tr>))}</tbody></table></div>))}
+                                </div>
+                            </div>
+                        )}
+                        
                         {activeTab === 'ledger' && (<div className="bg-white p-6 rounded-2xl shadow-sm border min-h-[500px] animate-fade-in"><div className="flex gap-4 mb-4 items-center"><label className="font-bold">科目：</label><select className="border p-2 rounded w-64" value={selectedAccount} onChange={e=>setSelectedAccount(e.target.value)}><option value="">請選擇...</option>{accounts.map(a => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}</select><label className="font-bold ml-4">月份：</label><input type="month" value={ledgerFilterMonth} onChange={e=>setLedgerFilterMonth(e.target.value)} className="border p-2 rounded" /></div><table className="w-full text-sm"><thead className="bg-slate-100 font-bold"><tr><th className="p-2 text-left">日期</th><th className="p-2 text-left">摘要</th><th className="p-2 text-right">借方</th><th className="p-2 text-right">貸方</th><th className="p-2 text-right">餘額</th></tr></thead><tbody>{ledgerData.map((row, idx) => (<tr key={idx} className={`border-b hover:bg-slate-50 ${row.isOpening ? 'bg-yellow-50 font-bold text-slate-500' : ''}`}><td className="p-2">{row.date}</td><td className="p-2">{row.desc}</td><td className="p-2 text-right">{row.debit>0?new Intl.NumberFormat().format(row.debit):'-'}</td><td className="p-2 text-right">{row.credit>0?new Intl.NumberFormat().format(row.credit):'-'}</td><td className="p-2 text-right font-bold text-blue-600">{new Intl.NumberFormat().format(row.balance)}</td></tr>))}</tbody></table></div>)}
                         
                         {activeTab === 'settings' && (
@@ -466,7 +601,7 @@
                                                             <td className="p-3 font-bold">{emp.name}</td>
                                                             <td className="p-3"><span className={`px-2 py-1 rounded text-xs font-bold ${emp.role==='caregiver'?'bg-green-100 text-green-700':'bg-purple-100 text-purple-700'}`}>{emp.role === 'caregiver' ? '居服員' : '行政'}</span></td>
                                                             <td className="p-3 text-slate-500 font-mono text-xs">
-                                                                {emp.bankAccount ? <span dangerouslySetInnerHTML={{__html: `${bankBadge} ${emp.bankAccount}`}}></span> : <span class="text-red-300">未設定</span>}
+                                                                {emp.bankAccount ? <span dangerouslySetInnerHTML={{__html: `${bankBadge} ${emp.bankAccount}`}}></span> : <span className="text-red-300">未設定</span>}
                                                             </td>
                                                             <td className="p-3 text-right font-mono font-bold text-lg">${new Intl.NumberFormat().format(emp.net)}</td>
                                                             <td className="p-3 text-center cursor-pointer" onClick={()=>togglePaymentMethod(idx)}>

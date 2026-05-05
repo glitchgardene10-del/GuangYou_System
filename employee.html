@@ -19,7 +19,7 @@
 
     <script type="module">
         // ★ 確保有匯入 setDoc
-        import { collection, addDoc, updateDoc, deleteDoc, doc, setDoc, onSnapshot, query, orderBy, getDocs, where } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+        import { collection, addDoc, updateDoc, deleteDoc, doc, setDoc, onSnapshot, query, orderBy, getDocs, where, deleteField } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
         let employeeList = [];
         let isEditing = false;
@@ -113,7 +113,7 @@
 
                 let salaryInfo = "";
                 if (emp.role === 'admin') {
-                    salaryInfo = `<div class="text-xs text-slate-500">本薪: ${Number(emp.baseSalary||0).toLocaleString()} ${emp.password ? '<span class="text-purple-500 ml-1">🔒已設密碼</span>' : '<span class="text-red-300 ml-1">⚠️未設密碼</span>'}</div>`;
+                    salaryInfo = `<div class="text-xs text-slate-500">本薪: ${Number(emp.baseSalary||0).toLocaleString()}</div>`;
                 } else {
                     salaryInfo = `<div class="text-xs text-slate-500">時薪: ${emp.hourlyWage||230} / 轉場: ${emp.transitWage||196}</div>`;
                 }
@@ -329,7 +329,7 @@
             document.getElementById('e-laborIns').value = emp.laborIns || 0;
             document.getElementById('e-healthIns').value = emp.healthIns || 0;
             document.getElementById('e-healthInsFamily').value = emp.healthInsFamily || 0;
-            document.getElementById('e-password').value = emp.password || "";
+            document.getElementById('e-password').value = "";
 
             document.getElementById('e-pensionRate').value = emp.pensionRate || 0;
             document.getElementById('e-hasLicense').checked = emp.hasLicense || false;
@@ -362,7 +362,6 @@
                 laborIns: Number(document.getElementById('e-laborIns').value) || 0,
                 healthIns: Number(document.getElementById('e-healthIns').value) || 0,
                 healthInsFamily: Number(document.getElementById('e-healthInsFamily').value) || 0,
-                password: password, 
                 pensionRate: Number(document.getElementById('e-pensionRate').value) || 0,
                 hasLicense: document.getElementById('e-hasLicense').checked,
                 hourlyWage: Number(document.getElementById('e-hourlyWage').value) || 230,
@@ -376,7 +375,11 @@
 
             try {
                 if (isEditing && currentEditId) { 
-                    await updateDoc(doc(db, "employees", currentEditId), empData); 
+                    await updateDoc(doc(db, "employees", currentEditId), {
+                        ...empData,
+                        password: deleteField(),
+                        passwordUpdatedAt: deleteField()
+                    }); 
                     closeModal();
                     alert("✅ 更新成功！");
                 } else {
@@ -538,7 +541,7 @@
                     
                     <div class="bg-white p-3 rounded border border-purple-200">
                         <label class="block text-xs font-bold text-purple-600 mb-1">🔑 系統登入密碼</label>
-                        <input type="text" id="e-password" class="w-full border border-purple-300 rounded p-2 font-mono text-slate-700" placeholder="請設定登入密碼">
+                        <input type="password" id="e-password" class="w-full border border-purple-300 rounded p-2 font-mono text-slate-700" placeholder="請設定登入密碼">
                         <p class="text-[10px] text-slate-400 mt-1">* 此密碼用於登入後台管理系統，請妥善保管。</p>
                     </div>
 

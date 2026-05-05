@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>考勤與審核管理後台 (v17.1 離職過濾版)</title>
     
+    <script src="permissions.js"></script>
     <script src="auth-guard.js"></script>
     <script type="module" src="config.js"></script>
 
@@ -30,7 +31,7 @@
         let currentUser = null; 
         
         let systemSettings = { allowedProxies: [], allowedEmployee: [], allowedLeave: [], allowedSalary: [], allowedAssessment: [], allowedAccounting: [], allowedAdmin: [], workStartTime: "08:30", workEndTime: "17:30", clockBuffer: 5 }; 
-        let allAdmins = []; let adminIds = new Set(); let allCaregivers = [];
+        let allAdmins = []; let adminIds = new Set(); let allCaregivers = []; let proxyStatusUnsubscribe = null;
         let currentEditAttendanceId = null; let currentAttendanceData = [];
 
         window.loginAs = loginAs;
@@ -53,6 +54,19 @@
         window.closeManualEntry = closeManualEntry;
         window.submitManualEntry = submitManualEntry;
         window.approveCorrection = approveCorrection;
+        window.changeProxyStatusMonth = changeProxyStatusMonth;
+        window.changeProxyStatusFilter = changeProxyStatusFilter;
+        window.deleteProxyRequest = deleteProxyRequest;
+        window.updateProxyCaregiverBalance = updateProxyCaregiverBalance;
+
+        function syncCurrentUserGrants(baseUser = currentUser) {
+            if (!baseUser) return null;
+            const permissions = window.KuangYouPermissions;
+            const sessionUser = permissions ? permissions.buildSessionUser(baseUser, systemSettings) : baseUser;
+            currentUser = sessionUser;
+            sessionStorage.setItem('kuangyou_user', JSON.stringify(sessionUser));
+            return sessionUser;
+        }
 
         const checkInit = setInterval(() => {
             if (window.db && window.auth) {
@@ -90,15 +104,14 @@
         }, 100);
 
         function performLoginSuccess(user) {
-            currentUser = user;
-            sessionStorage.setItem('kuangyou_user', JSON.stringify(user));
+            const sessionUser = syncCurrentUserGrants(user);
             document.getElementById('login-screen').classList.add('hidden');
             document.getElementById('main-screen').classList.remove('hidden');
-            document.getElementById('current-user').innerText = user.name || user.code;
+            document.getElementById('current-user').innerText = sessionUser.name || sessionUser.code;
             startSettingsListener();
             loadEmployeeData().then(() => {
                 renderSidebar();
-                handleLoginRedirect(user);
+                handleLoginRedirect(sessionUser);
             });
         }
 
@@ -106,8 +119,9 @@
             if (user.role === 'super_admin' || user.role === 'manager') { 
                 switchTab('dashboard'); 
             } else {
-                if (systemSettings.allowedProxies?.includes(user.id)) { switchTab('proxy'); } 
-                else { switchTab('attendance'); }
+                if (user.grants?.allowedAdmin) { switchTab('attendance'); }
+                else if (user.grants?.allowedProxies) { switchTab('proxy'); }
+                else { switchTab('dashboard'); }
             }
         }
 
@@ -115,6 +129,13 @@
             onSnapshot(doc(db, "system_settings", "config"), (docSnap) => {
                 if (docSnap.exists()) {
                     systemSettings = { ...systemSettings, ...docSnap.data() };
+                    if (currentUser) {
+                        const sessionUser = syncCurrentUserGrants(currentUser);
+                        if (!document.getElementById('main-screen').classList.contains('hidden')) {
+                            document.getElementById('current-user').innerText = sessionUser.name || sessionUser.code;
+                            renderSidebar();
+                        }
+                    }
                     if(document.getElementById('work-start')) {
                         document.getElementById('work-start').value = systemSettings.workStartTime || "08:30";
                         document.getElementById('work-end').value = systemSettings.workEndTime || "17:30";
@@ -213,7 +234,12 @@
             }
         }
 
-        function toggleSidebar() { document.getElementById('sidebar').classList.toggle('-translate-x-full'); document.getElementById('sidebar').classList.toggle('w-0'); document.getElementById('sidebar').classList.toggle('w-64'); }
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            if (!sidebar) return;
+            sidebar.classList.remove('-translate-x-full', 'w-0');
+            sidebar.classList.toggle('hidden');
+        }
 
         function renderSidebar() {
             const nav = document.getElementById('nav-menu');
@@ -227,19 +253,24 @@
                 nav.innerHTML += `<div onclick="switchTab('approval')" id="nav-approval" class="nav-item"><span>✅</span> 待簽核清單 <span id="badge-count" class="bg-red-500 text-white text-[10px] px-2 rounded-full hidden">0</span></div>`;
             }
             
-            nav.innerHTML += `<div onclick="switchTab('attendance')" id="nav-attendance" class="nav-item"><span>📊</span> 行政出勤監控</div>`;
+            if (isSuper || hasPermission('allowedAdmin')) {
+                nav.innerHTML += `<div onclick="switchTab('attendance')" id="nav-attendance" class="nav-item"><span>📊</span> 行政出勤監控</div>`;
+            }
             
             if (isSuper || hasPermission('allowedProxies')) { nav.innerHTML += `<div onclick="switchTab('proxy')" id="nav-proxy" class="nav-item"><span>📝</span> 居服員代申請</div>`; }
             
             nav.innerHTML += `<div class="px-4 py-2 text-xs font-bold text-slate-400 uppercase tracking-wider mt-4">ERP 核心系統</div>`;
             
-            if (isSuper || hasPermission('allowedEmployee')) { nav.innerHTML += `<div id="nav-emp" onclick="openExternalSystem('employee.html', this)" class="nav-item"><span>👥</span> 員工資料庫</div>`; }
+if (isSuper || hasPermission('allowedEmployee')) { nav.innerHTML += `<div id="nav-emp" onclick="openExternalSystem('employee.html', this)" class="nav-item"><span>👥</span> 員工資料庫</div>`; }
             if (isSuper || hasPermission('allowedLeave')) { nav.innerHTML += `<div onclick="openExternalSystem('leave.html', this)" class="nav-item"><span>📚</span> 特休存摺管理</div>`; }
             if (isSuper || hasPermission('allowedSalary')) {
                 nav.innerHTML += `<div onclick="openExternalSystem('salary.html', this)" class="nav-item"><span>💰</span> 行政人員薪資</div>`;
                 nav.innerHTML += `<div onclick="openExternalSystem('salary_caregiver.html', this)" class="nav-item"><span>🏥</span> 居服員薪資</div>`;
             }
-            if (isSuper || hasPermission('allowedAssessment')) { nav.innerHTML += `<div onclick="openExternalSystem('assessment.html', this)" class="nav-item"><span>📋</span> 考核評鑑系統</div>`; }
+            if (isSuper || hasPermission('allowedAssessment')) {
+                nav.innerHTML += `<div onclick="openExternalSystem('assessment.html', this)" class="nav-item"><span>📋</span> 考核評鑑系統</div>`;
+                nav.innerHTML += `<div onclick="openExternalSystem('assessment_legacy.html', this)" class="nav-item"><span>🗂️</span> 考核評鑑系統(舊)</div>`;
+            }
             
             // 系統設定 (只有老闆能看，或根據您的需求調整)
             if (isSuper) { 
@@ -250,7 +281,7 @@
         function hasPermission(permKey) { 
             if(!currentUser) return false; 
             if(['super_admin', 'manager'].includes(currentUser.role)) return true; 
-            return systemSettings[permKey]?.includes(currentUser.id); 
+            return Boolean(currentUser.grants?.[permKey]); 
         }
 
         function switchTab(tabId) {
@@ -264,6 +295,7 @@
             if(activeNav) activeNav.classList.add('active');
             if(tabId === 'approval') loadPendingRequests();
             if(tabId === 'dashboard') updateDashboardStats();
+            if(tabId === 'proxy') loadProxyRequestStatus();
             if(tabId === 'attendance') { 
                 const currentMonth = dayjs().format('YYYY-MM'); 
                 document.getElementById('attendance-month').value = currentMonth; 
@@ -301,6 +333,21 @@
                 snap.forEach(d => {
                     const r = {id: d.id, ...d.data()};
                     let typeBadge = "", actionBtn = "";
+                    const dateLabel = r.requestDateLabel || r.date || '-';
+                    const hoursLabel = Number(r.requestedHours ?? r.hours ?? 0).toFixed(3);
+                    const allocationSummary = Array.isArray(r.allocationPreview) && r.allocationPreview.length > 0
+                        ? `<div class="text-xs text-amber-700 mt-1">拆分預覽：${buildLeaveAllocationSummary(r.allocationPreview)}</div>`
+                        : '';
+                    const leaveModeLabel = r.category === 'leave' ? getLeaveModeLabel(r.leaveMode) : '';
+                    const leaveRangeLine = r.category === 'leave'
+                        ? `<div class="text-sm text-slate-500">請假區間：${dateLabel}${r.leaveMode === 'half_day' ? ` ｜ ${getHalfDaySlotLabel(r.halfDaySlot)}` : ''}</div>`
+                        : '';
+                    const leaveModeLine = r.category === 'leave'
+                        ? `<div class="text-sm text-slate-500">請假模式：${leaveModeLabel}</div>`
+                        : '';
+                    const requestTypeLabel = r.category === 'leave'
+                        ? `<div class="text-sm text-slate-500">申請假別：${r.requestedType || r.type || '-'}</div>`
+                        : '';
                     if (r.category === 'correction') {
                         typeBadge = `<span class="bg-purple-100 text-purple-700 px-2 py-1 rounded text-xs font-bold">⏰ 補登 (${r.type})</span>`;
                         actionBtn = `<button onclick="approveCorrection('${r.id}', '${r.empId}', '${r.name}', '${r.date}', '${r.type}')" class="px-3 py-1 bg-purple-600 text-white rounded-lg text-sm font-bold shadow hover:bg-purple-700">前往補登</button>`;
@@ -308,7 +355,7 @@
                         typeBadge = r.category === 'leave' ? `<span class="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs font-bold">請假</span>` : `<span class="bg-orange-100 text-orange-700 px-2 py-1 rounded text-xs font-bold">加班</span>`;
                         actionBtn = `<button onclick="processRequest('${r.id}','approved')" class="px-4 py-1 bg-green-600 text-white rounded-lg text-sm font-bold shadow transition">核准</button>`;
                     }
-                    list.innerHTML += `<div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-3 flex justify-between items-center"><div><div class="flex items-center gap-2 mb-1"><span class="font-bold text-lg text-slate-800">${r.name}</span>${typeBadge}</div><div class="text-sm text-slate-500">日期：${r.date} | ${r.hours||0} H</div><div class="text-xs text-slate-400 mt-1">${r.note||'無'}</div></div><div class="flex gap-2"><button onclick="processRequest('${r.id}','rejected')" class="px-4 py-1 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 text-sm font-bold transition">駁回</button>${actionBtn}</div></div>`;
+                    list.innerHTML += `<div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-3 flex justify-between items-center"><div><div class="flex items-center gap-2 mb-1"><span class="font-bold text-lg text-slate-800">${r.name}</span>${typeBadge}</div>${requestTypeLabel}${leaveModeLine}${leaveRangeLine}<div class="text-sm text-slate-500">申請時數：${hoursLabel} H</div>${allocationSummary}<div class="text-xs text-slate-400 mt-1">${r.note||'無'}</div></div><div class="flex gap-2"><button onclick="processRequest('${r.id}','rejected')" class="px-4 py-1 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 text-sm font-bold transition">駁回</button>${actionBtn}</div></div>`;
                 });
             });
         }
@@ -323,12 +370,144 @@
             }, 100);
         }
 
+        function getLeaveModeLabel(mode) {
+            if (mode === 'full_day') return '整日請假';
+            if (mode === 'half_day') return '半日請假';
+            if (mode === 'hourly') return '中途請假';
+            return '一般請假';
+        }
+
+        function getHalfDaySlotLabel(slot) {
+            return slot === 'am' ? '上午半日' : '下午半日';
+        }
+
+        async function getEmployeeLeaveBalances(empId) {
+            const qLedger = query(collection(db, "leave_ledger"), where("empId", "==", empId));
+            const ledgerSnap = await getDocs(qLedger);
+            let annual = 0;
+            let comp = 0;
+            ledgerSnap.forEach((d) => {
+                const item = d.data();
+                const isExpired = item.expiryDate ? dayjs(item.expiryDate).isBefore(dayjs(), 'day') : false;
+                if (Number(item.remaining || 0) <= 0 || isExpired) return;
+                if (item.sourceType && item.sourceType.includes("補休")) comp += Number(item.remaining || 0);
+                else annual += Number(item.remaining || 0);
+            });
+            return {
+                annual: Number(annual.toFixed(3)),
+                comp: Number(comp.toFixed(3))
+            };
+        }
+
+        function calculateLeaveAllocationPreview(requestedType, totalHours, availableComp, availableAnnual) {
+            const preview = [];
+            let remaining = Number(totalHours || 0);
+            const pushItem = (type, hours) => {
+                if (hours > 0) preview.push({ type, hours: Number(hours.toFixed(3)) });
+            };
+
+            if (!['補休', '特休'].includes(requestedType)) {
+                pushItem(requestedType, remaining);
+                return preview;
+            }
+
+            const firstType = requestedType;
+            const secondType = requestedType === '補休' ? '特休' : '補休';
+            let firstBalance = requestedType === '補休' ? availableComp : availableAnnual;
+            let secondBalance = requestedType === '補休' ? availableAnnual : availableComp;
+
+            const firstHours = Math.min(firstBalance, remaining);
+            pushItem(firstType, firstHours);
+            remaining -= firstHours;
+
+            const secondHours = Math.min(secondBalance, remaining);
+            pushItem(secondType, secondHours);
+            remaining -= secondHours;
+
+            if (remaining > 0) pushItem('事假', remaining);
+            return preview;
+        }
+
+        function buildLeaveAllocationSummary(preview) {
+            if (!Array.isArray(preview) || preview.length === 0) return '';
+            return preview.map((item) => `${item.type} ${Number(item.hours || 0).toFixed(3)}H`).join('、');
+        }
+
+        async function applyAllocationDeductions(batch, empId, allocationPreview) {
+            const qLedger = query(collection(db, "leave_ledger"), where("empId", "==", empId));
+            const ledgerSnap = await getDocs(qLedger);
+            let ledgers = [];
+            ledgerSnap.forEach(d => ledgers.push({ id: d.id, ...d.data() }));
+            ledgers = ledgers.filter(l => l.remaining > 0 && dayjs(l.expiryDate).isAfter(dayjs()))
+                             .sort((a, b) => dayjs(a.expiryDate).unix() - dayjs(b.expiryDate).unix());
+
+            const deductionLog = [];
+            for (const item of allocationPreview) {
+                if (!['特休', '補休'].includes(item.type)) continue;
+                let hoursToDeduct = Number(item.hours || 0);
+                const eligibleLedgers = ledgers.filter((l) => item.type === '補休'
+                    ? (l.sourceType && l.sourceType.includes("補休"))
+                    : (!l.sourceType || !l.sourceType.includes("補休"))
+                );
+
+                const totalBalance = eligibleLedgers.reduce((sum, l) => sum + Number(l.remaining || 0), 0);
+                if (totalBalance < hoursToDeduct) {
+                    throw new Error(`${item.type} 餘額不足，無法完成核准。`);
+                }
+
+                for (const ledger of eligibleLedgers) {
+                    if (hoursToDeduct <= 0) break;
+                    const deduct = Math.min(Number(ledger.remaining || 0), hoursToDeduct);
+                    batch.update(doc(db, "leave_ledger", ledger.id), { remaining: Number((ledger.remaining - deduct).toFixed(3)) });
+                    ledger.remaining = Number((ledger.remaining - deduct).toFixed(3));
+                    deductionLog.push({ ledgerId: ledger.id, source: ledger.sourceType, type: item.type, amount: deduct });
+                    hoursToDeduct = Number((hoursToDeduct - deduct).toFixed(3));
+                }
+            }
+
+            return deductionLog;
+        }
+
+        function buildLeaveRecordsFromRequest(reqId, reqData, deductionLog) {
+            const allocationQueue = (reqData.allocationPreview || []).map((item) => ({ ...item, remaining: Number(item.hours || 0) }));
+            const dateBreakdown = Array.isArray(reqData.dateBreakdown) && reqData.dateBreakdown.length > 0
+                ? reqData.dateBreakdown
+                : [{ date: reqData.date, hours: reqData.hours, period: reqData.period || 'middle', label: reqData.requestDateLabel || reqData.date }];
+            const records = [];
+
+            dateBreakdown.forEach((segment) => {
+                let segmentRemaining = Number(segment.hours || 0);
+                for (const item of allocationQueue) {
+                    if (segmentRemaining <= 0) break;
+                    if (item.remaining <= 0) continue;
+                    const usedHours = Math.min(item.remaining, segmentRemaining);
+                    records.push({
+                        empId: reqData.empId,
+                        date: segment.date,
+                        type: item.type,
+                        hours: Number(usedHours.toFixed(3)),
+                        note: reqData.note || "線上申請核准",
+                        period: segment.period || 'middle',
+                        sourceRequestId: reqId,
+                        requestedType: reqData.requestedType || reqData.type,
+                        requestDateLabel: reqData.requestDateLabel || reqData.date || segment.date,
+                        deductionLog: deductionLog.filter((log) => log.type === item.type),
+                        createdAt: new Date().toISOString()
+                    });
+                    item.remaining = Number((item.remaining - usedHours).toFixed(3));
+                    segmentRemaining = Number((segmentRemaining - usedHours).toFixed(3));
+                }
+            });
+
+            return records;
+        }
+
         async function processRequest(reqId, action) {
             if (action === 'rejected') {
                 const reason = prompt("請輸入駁回原因：", "資料不全");
                 if (reason === null) return;
                 const batch = writeBatch(db);
-                batch.update(doc(db, "requests", reqId), { status: 'rejected', rejectReason: reason || "未填寫", reviewedAt: new Date().toISOString() });
+                batch.update(doc(db, "requests", reqId), { status: 'rejected', rejectReason: reason || "未填寫", reviewedAt: new Date().toISOString(), reservationStatus: 'released' });
                 await batch.commit();
                 return;
             }
@@ -340,9 +519,8 @@
             const reqData = reqSnap.data();
             const batch = writeBatch(db);
 
-            batch.update(reqRef, { status: 'approved', reviewedAt: new Date().toISOString() });
-
             if (reqData.category === 'overtime') {
+                batch.update(reqRef, { status: 'approved', reviewedAt: new Date().toISOString(), reservationStatus: 'applied' });
                 const ledgerRef = doc(collection(db, "leave_ledger"));
                 batch.set(ledgerRef, {
                     empId: reqData.empId,
@@ -355,44 +533,83 @@
                 });
             } 
             else if (reqData.category === 'leave') {
-                let deductionLog = [];
-                let isPaidLeave = (reqData.type === '特休' || reqData.type === '補休');
-
-                if (isPaidLeave) {
-                    const qLedger = query(collection(db, "leave_ledger"), where("empId", "==", reqData.empId));
-                    const ledgerSnap = await getDocs(qLedger);
-                    let ledgers = [];
-                    ledgerSnap.forEach(d => ledgers.push({ id: d.id, ...d.data() }));
-
-                    ledgers = ledgers.filter(l => l.remaining > 0 && dayjs(l.expiryDate).isAfter(dayjs()))
-                                     .sort((a, b) => dayjs(a.expiryDate).unix() - dayjs(b.expiryDate).unix());
-
-                    const totalBalance = ledgers.reduce((sum, l) => sum + l.remaining, 0);
-                    if (totalBalance < reqData.hours) {
-                        return alert(`❌ 核准失敗：餘額不足！\n\n可用餘額：${totalBalance} H\n申請時數：${reqData.hours} H`);
-                    }
-
-                    let hoursToDeduct = reqData.hours;
-                    for (let l of ledgers) {
-                        if (hoursToDeduct <= 0) break;
-                        const deduct = Math.min(l.remaining, hoursToDeduct);
-                        const ledgerRef = doc(db, "leave_ledger", l.id);
-                        batch.update(ledgerRef, { remaining: l.remaining - deduct });
-                        deductionLog.push({ ledgerId: l.id, source: l.sourceType, amount: deduct });
-                        hoursToDeduct -= deduct;
-                    }
+                let normalizedReqData = { ...reqData };
+                if (!Array.isArray(normalizedReqData.allocationPreview) || normalizedReqData.allocationPreview.length === 0) {
+                    const balances = await getEmployeeLeaveBalances(reqData.empId);
+                    const requestedType = reqData.requestedType || reqData.type;
+                    const requestedHours = Number(reqData.requestedHours || reqData.hours || 0);
+                    const fallbackPreview = calculateLeaveAllocationPreview(requestedType, requestedHours, balances.comp, balances.annual);
+                    normalizedReqData = {
+                        ...normalizedReqData,
+                        requestedType,
+                        requestedHours,
+                        allocationPreview: fallbackPreview,
+                        requestDateLabel: reqData.requestDateLabel || reqData.date || '-',
+                        dateBreakdown: Array.isArray(reqData.dateBreakdown) && reqData.dateBreakdown.length > 0
+                            ? reqData.dateBreakdown
+                            : [{ date: reqData.date, hours: requestedHours, period: reqData.period || 'middle' }]
+                    };
+                    batch.update(reqRef, {
+                        requestedType,
+                        requestedHours,
+                        allocationPreview: fallbackPreview,
+                        requestDateLabel: normalizedReqData.requestDateLabel,
+                        dateBreakdown: normalizedReqData.dateBreakdown
+                    });
                 }
 
-                const recordRef = doc(collection(db, "leave_records"));
-                batch.set(recordRef, {
-                    empId: reqData.empId,
-                    date: reqData.date,
-                    type: reqData.type,
-                    hours: reqData.hours,
-                    note: reqData.note || "線上申請核准",
-                    deductionLog: deductionLog, 
-                    createdAt: new Date().toISOString()
-                });
+                batch.update(reqRef, { status: 'approved', reviewedAt: new Date().toISOString(), reservationStatus: 'applied' });
+                let deductionLog = [];
+                if (Array.isArray(normalizedReqData.allocationPreview) && normalizedReqData.allocationPreview.length > 0) {
+                    try {
+                        deductionLog = await applyAllocationDeductions(batch, normalizedReqData.empId, normalizedReqData.allocationPreview);
+                    } catch (e) {
+                        return alert(`❌ 核准失敗：${e.message}`);
+                    }
+                    const records = buildLeaveRecordsFromRequest(reqId, normalizedReqData, deductionLog);
+                    records.forEach((record) => {
+                        const recordRef = doc(collection(db, "leave_records"));
+                        batch.set(recordRef, record);
+                    });
+                } else {
+                    let isPaidLeave = (reqData.type === '特休' || reqData.type === '補休');
+
+                    if (isPaidLeave) {
+                        const qLedger = query(collection(db, "leave_ledger"), where("empId", "==", reqData.empId));
+                        const ledgerSnap = await getDocs(qLedger);
+                        let ledgers = [];
+                        ledgerSnap.forEach(d => ledgers.push({ id: d.id, ...d.data() }));
+
+                        ledgers = ledgers.filter(l => l.remaining > 0 && dayjs(l.expiryDate).isAfter(dayjs()))
+                                         .sort((a, b) => dayjs(a.expiryDate).unix() - dayjs(b.expiryDate).unix());
+
+                        const totalBalance = ledgers.reduce((sum, l) => sum + l.remaining, 0);
+                        if (totalBalance < reqData.hours) {
+                            return alert(`❌ 核准失敗：餘額不足！\n\n可用餘額：${totalBalance} H\n申請時數：${reqData.hours} H`);
+                        }
+
+                        let hoursToDeduct = reqData.hours;
+                        for (let l of ledgers) {
+                            if (hoursToDeduct <= 0) break;
+                            const deduct = Math.min(l.remaining, hoursToDeduct);
+                            const ledgerRef = doc(db, "leave_ledger", l.id);
+                            batch.update(ledgerRef, { remaining: l.remaining - deduct });
+                            deductionLog.push({ ledgerId: l.id, source: l.sourceType, amount: deduct });
+                            hoursToDeduct -= deduct;
+                        }
+                    }
+
+                    const recordRef = doc(collection(db, "leave_records"));
+                    batch.set(recordRef, {
+                        empId: reqData.empId,
+                        date: reqData.date,
+                        type: reqData.type,
+                        hours: reqData.hours,
+                        note: reqData.note || "線上申請核准",
+                        deductionLog: deductionLog, 
+                        createdAt: new Date().toISOString()
+                    });
+                }
             }
 
             try {
@@ -478,7 +695,44 @@
             }); 
         }
 
-        function renderCaregiverSelect() { const sel = document.getElementById('proxy-caregiver'); if(!sel) return; sel.innerHTML = '<option value="">請選擇居服員</option>'; allCaregivers.forEach(c => { sel.innerHTML += `<option value="${c.id}" data-name="${c.name}">${c.name} (${c.code})</option>`; }); }
+        function renderCaregiverSelect() {
+            const sel = document.getElementById('proxy-caregiver');
+            if(!sel) return;
+            sel.innerHTML = '<option value="">請選擇居服員</option>';
+            allCaregivers.forEach(c => {
+                sel.innerHTML += `<option value="${c.id}" data-name="${c.name}">${c.name} (${c.code})</option>`;
+            });
+            updateProxyCaregiverBalance();
+        }
+
+        async function updateProxyCaregiverBalance() {
+            const sel = document.getElementById('proxy-caregiver');
+            const annualEl = document.getElementById('proxy-balance-annual');
+            const compEl = document.getElementById('proxy-balance-comp');
+            const wrapEl = document.getElementById('proxy-balance-wrap');
+            if (!sel || !annualEl || !wrapEl) return;
+
+            const empId = sel.value;
+            if (!empId) {
+                annualEl.innerText = '-';
+                if (compEl) compEl.innerText = '-';
+                wrapEl.classList.add('opacity-70');
+                return;
+            }
+
+            wrapEl.classList.remove('opacity-70');
+            annualEl.innerText = '讀取中...';
+            if (compEl) compEl.innerText = '讀取中...';
+            try {
+                const balances = await getEmployeeLeaveBalances(empId);
+                annualEl.innerText = `${Number(balances.annual || 0).toFixed(3)} 小時`;
+                if (compEl) compEl.innerText = `${Number(balances.comp || 0).toFixed(3)} 小時`;
+            } catch (e) {
+                console.error(e);
+                annualEl.innerText = '讀取失敗';
+                if (compEl) compEl.innerText = '讀取失敗';
+            }
+        }
         
         async function saveSettings() { 
             const newPermissions = { allowedProxies: [], allowedEmployee: [], allowedLeave: [], allowedSalary: [], allowedAssessment: [], allowedAccounting: [], allowedAdmin: [] }; 
@@ -497,7 +751,101 @@
             } catch(e) { console.error(e); alert("儲存失敗"); } 
         }
 
-        async function submitProxyRequest(){const sel=document.getElementById('proxy-caregiver');const empId=sel.value;const empName=sel.options[sel.selectedIndex]?.dataset.name;const date=document.getElementById('proxy-date').value;const type=document.getElementById('proxy-type').value;const hours=document.getElementById('proxy-hours').value;if(!empId||!date||!hours)return alert("請填寫完整");await addDoc(collection(db,"requests"),{empId,name:empName,category:"leave",type,date,hours:Number(hours),createdBy:currentUser.id,note:`由 ${currentUser.name} 代申請`,status:"pending",createdAt:new Date().toISOString()});alert("代申請已送出！");document.getElementById('proxy-hours').value=""}
+        async function submitProxyRequest() {
+            const sel = document.getElementById('proxy-caregiver');
+            const empId = sel.value;
+            const empName = sel.options[sel.selectedIndex]?.dataset.name;
+            const date = document.getElementById('proxy-date').value;
+            const type = document.getElementById('proxy-type').value;
+            const hours = Number(document.getElementById('proxy-hours').value || 0);
+            if (!empId || !date || !hours) return alert("請填寫完整");
+
+            const balances = await getEmployeeLeaveBalances(empId);
+            const allocationPreview = calculateLeaveAllocationPreview(type, hours, balances.comp, balances.annual);
+            const allocationSummary = buildLeaveAllocationSummary(allocationPreview);
+            const confirmText = allocationSummary
+                ? `本次將拆分為：${allocationSummary}\n是否送出代申請？`
+                : "是否送出代申請？";
+            if (!confirm(confirmText)) return;
+
+            await addDoc(collection(db, "requests"), {
+                empId,
+                name: empName,
+                proxyForName: empName,
+                category: "leave",
+                type,
+                requestedType: type,
+                date,
+                requestDateLabel: date,
+                leaveMode: 'hourly',
+                halfDaySlot: null,
+                hours: Number(hours.toFixed(3)),
+                requestedHours: Number(hours.toFixed(3)),
+                dateBreakdown: [{ date, hours: Number(hours.toFixed(3)), period: 'middle', label: date }],
+                allocationPreview,
+                reservationStatus: "reserved",
+                createdBy: currentUser.id,
+                createdByName: currentUser.name || currentUser.code || "",
+                note: `由 ${currentUser.name} 代申請`,
+                status: "pending",
+                createdAt: new Date().toISOString()
+            });
+
+            alert(`代申請已送出！\n本次拆分：${allocationSummary || `${type} ${Number(hours.toFixed(3)).toFixed(3)}H`}`);
+            document.getElementById('proxy-date').value = "";
+            document.getElementById('proxy-hours').value = "";
+            loadProxyRequestStatus();
+        }
+        function getProxyStatusBadge(status){if(status==='approved')return '<span class="px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-700">已通過</span>';if(status==='rejected')return '<span class="px-3 py-1 rounded-full text-xs font-bold bg-rose-100 text-rose-700">已拒絕</span>';if(status==='revoked')return '<span class="px-3 py-1 rounded-full text-xs font-bold bg-slate-200 text-slate-600">已撤銷</span>';return '<span class="px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-700">待審核</span>';}
+        function changeProxyStatusMonth(){loadProxyRequestStatus();}
+        function changeProxyStatusFilter(){loadProxyRequestStatus();}
+        async function deleteProxyRequest(id){if(!confirm("確定刪除此代申請？"))return;const snap=await getDoc(doc(db,"requests",id));if(!snap.exists())return alert("找不到申請資料");const data=snap.data();if(data.createdBy!==currentUser.id)return alert("您只能刪除自己送出的代申請");if(data.status!=='pending')return alert("只有待審核的申請可以刪除");await deleteDoc(doc(db,"requests",id));loadProxyRequestStatus();}
+        function loadProxyRequestStatus(){
+            const list=document.getElementById('proxy-status-list');
+            const monthInput=document.getElementById('proxy-status-month');
+            const statusInput=document.getElementById('proxy-status-filter');
+            if(!list||!currentUser?.id)return;
+            if(monthInput&&!monthInput.value)monthInput.value=dayjs().format('YYYY-MM');
+            if(proxyStatusUnsubscribe){proxyStatusUnsubscribe();proxyStatusUnsubscribe=null;}
+            list.innerHTML='<div class="text-sm text-slate-400 text-center py-8">讀取中...</div>';
+            const selectedMonth=monthInput?.value||dayjs().format('YYYY-MM');
+            const selectedStatus=statusInput?.value||'all';
+            const q=query(collection(db,"requests"),where("createdBy","==",currentUser.id));
+            proxyStatusUnsubscribe=onSnapshot(q,(snap)=>{
+                const records=[];
+                snap.forEach((d)=>{
+                    const r={id:d.id,...d.data()};
+                    if(r.category==='leave'&&r.empId){
+                        const monthSource=r.date||r.createdAt;
+                        const monthMatched=dayjs(monthSource).isValid()&&dayjs(monthSource).format('YYYY-MM')===selectedMonth;
+                        const statusMatched=selectedStatus==='all'||r.status===selectedStatus;
+                        if(monthMatched&&statusMatched)records.push(r);
+                    }
+                });
+                records.sort((a,b)=>dayjs(b.createdAt||0).valueOf()-dayjs(a.createdAt||0).valueOf());
+                if(records.length===0){
+                    list.innerHTML=`<div class="text-sm text-slate-400 text-center py-8">${selectedMonth} 沒有符合條件的代申請紀錄。</div>`;
+                    return;
+                }
+                list.innerHTML=records.map((r)=>{
+                    const deleteButton=r.status==='pending'
+                        ? `<button onclick="deleteProxyRequest('${r.id}')" class="px-3 py-1 rounded-lg text-xs font-bold text-red-500 border border-red-200 hover:bg-red-50">刪除</button>`
+                        : '';
+                    const revokedLine=r.revokedAt
+                        ? `<div class="text-xs text-slate-400 mt-1">撤銷時間：${dayjs(r.revokedAt).format('YYYY-MM-DD HH:mm')}</div>`
+                        : '';
+                    const allocationLine=Array.isArray(r.allocationPreview)&&r.allocationPreview.length>0
+                        ? `<div class="text-xs text-amber-700 mt-1">拆分預覽：${buildLeaveAllocationSummary(r.allocationPreview)}</div>`
+                        : '';
+                    const dateLabel=r.requestDateLabel||r.date||'-';
+                    const hoursLabel=Number(r.requestedHours ?? r.hours ?? 0).toFixed(3);
+                    const leaveModeLine=`<div class="text-xs text-slate-400 mt-1">請假模式：${getLeaveModeLabel(r.leaveMode)}${r.leaveMode==='half_day'&&r.halfDaySlot?` ｜ ${getHalfDaySlotLabel(r.halfDaySlot)}`:''}</div>`;
+                    return `<div class="border border-slate-200 rounded-xl p-4 bg-slate-50"><div class="flex flex-wrap items-center justify-between gap-3"><div><div class="text-lg font-bold text-slate-800">${r.proxyForName||r.name||'-'}</div><div class="text-sm text-slate-500 mt-1">${dateLabel} ｜ ${r.type||'-'} ｜ ${hoursLabel} 小時</div>${leaveModeLine}${allocationLine}</div><div class="flex items-center gap-2">${getProxyStatusBadge(r.status)}${deleteButton}</div></div><div class="text-xs text-slate-500 mt-3">代申請人：${r.createdByName||currentUser.name||currentUser.code||'-'}</div>${r.reviewedAt?`<div class="text-xs text-slate-400 mt-1">審核時間：${dayjs(r.reviewedAt).format('YYYY-MM-DD HH:mm')}</div>`:''}${revokedLine}${r.rejectReason?`<div class="text-sm text-rose-600 mt-2">退回原因：${r.rejectReason}</div>`:''}</div>`;
+                }).join('');
+            },()=>{
+                list.innerHTML='<div class="text-sm text-rose-500 text-center py-8">讀取失敗，請稍後再試。</div>';
+            });
+        }
         function openEditAttendance(id,i,o){currentEditAttendanceId=id;document.getElementById('edit-modal').classList.remove('hidden');document.getElementById('edit-in').value=i;document.getElementById('edit-out').value=o}
         function closeEditModal(){document.getElementById('edit-modal').classList.add('hidden')}
         async function submitEditAttendance(){if(!currentEditAttendanceId)return;await updateDoc(doc(db,"attendance",currentEditAttendanceId),{inTime:document.getElementById('edit-in').value||null,outTime:document.getElementById('edit-out').value||null,lastEditedBy:currentUser.name,lastEditedAt:new Date().toISOString()});closeEditModal()}
@@ -586,12 +934,41 @@
                 <h2 class="text-2xl font-bold text-slate-800 mb-6">居服員休假代申請</h2>
                 <div class="bg-white p-8 rounded-2xl shadow-sm border border-slate-200 max-w-2xl">
                     <div class="grid grid-cols-2 gap-6 mb-6">
-                        <div class="col-span-2"><label class="block text-sm font-bold text-slate-500 mb-2">選擇居服員</label><select id="proxy-caregiver" class="w-full border rounded-lg p-3 bg-slate-50 font-bold text-slate-700"></select></div>
+                        <div class="col-span-2"><label class="block text-sm font-bold text-slate-500 mb-2">選擇居服員</label><select id="proxy-caregiver" onchange="updateProxyCaregiverBalance()" class="w-full border rounded-lg p-3 bg-slate-50 font-bold text-slate-700"></select></div>
+                        <div id="proxy-balance-wrap" class="col-span-2 grid grid-cols-1 gap-3 bg-slate-50 border border-slate-200 rounded-xl p-4 opacity-70">
+                            <div class="bg-white border border-emerald-100 rounded-xl px-4 py-3">
+                                <div class="text-xs font-bold text-emerald-500">目前特休餘額</div>
+                                <div id="proxy-balance-annual" class="text-lg font-black text-emerald-700 mt-1">-</div>
+                            </div>
+                            <div class="hidden bg-white border border-blue-100 rounded-xl px-4 py-3">
+                                <div class="text-xs font-bold text-blue-500">目前補休餘額</div>
+                                <div id="proxy-balance-comp" class="text-lg font-black text-blue-700 mt-1">-</div>
+                            </div>
+                        </div>
                         <div><label class="block text-sm font-bold text-slate-500 mb-2">日期</label><input type="date" id="proxy-date" class="w-full border rounded-lg p-3"></div>
                         <div><label class="block text-sm font-bold text-slate-500 mb-2">假別</label><select id="proxy-type" class="w-full border rounded-lg p-3 bg-white"><option value="特休">特休</option><option value="補休">補休</option><option value="病假">病假</option><option value="事假">事假</option><option value="婚假">婚假</option><option value="喪假">喪假</option><option value="公假">公假</option><option value="產假">產假</option><option value="陪產假">陪產假</option><option value="生理假">生理假</option><option value="家庭照顧假">家庭照顧假</option><option value="歲時祭儀假">歲時祭儀假</option></select></div>
                         <div><label class="block text-sm font-bold text-slate-500 mb-2">時數</label><input type="number" id="proxy-hours" class="w-full border rounded-lg p-3" placeholder="4.0"></div>
                     </div>
                     <button onclick="submitProxyRequest()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl shadow-lg transition">送出申請</button>
+                </div>
+                <div class="bg-white p-8 rounded-2xl shadow-sm border border-slate-200 mt-6 max-w-4xl">
+                    <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                        <h3 class="text-lg font-bold text-slate-800">代申請進度</h3>
+                        <div class="flex items-center gap-3">
+                            <div class="text-xs text-slate-400">可查看幫哪位居服員申請，以及審核結果</div>
+                            <input type="month" id="proxy-status-month" onchange="changeProxyStatusMonth()" class="border rounded-lg px-3 py-2 text-sm font-bold text-slate-600 bg-white shadow-sm">
+                            <select id="proxy-status-filter" onchange="changeProxyStatusFilter()" class="border rounded-lg px-3 py-2 text-sm font-bold text-slate-600 bg-white shadow-sm">
+                                <option value="all">全部狀態</option>
+                                <option value="pending">待審核</option>
+                                <option value="approved">已通過</option>
+                                <option value="rejected">已拒絕</option>
+                                <option value="revoked">已撤銷</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div id="proxy-status-list" class="space-y-3">
+                        <div class="text-sm text-slate-400 text-center py-8">進入此頁後將顯示代申請紀錄。</div>
+                    </div>
                 </div>
             </div>
             <div id="view-settings" class="view-section h-full flex flex-col p-8 hidden">
@@ -605,5 +982,4 @@
     <div id="edit-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm"><div class="bg-white p-6 rounded-2xl shadow-2xl w-80 border border-slate-200"><h3 class="font-bold text-lg mb-4 text-slate-800">✏️ 修正考勤紀錄</h3><div class="space-y-4"><div><label class="block text-xs font-bold text-slate-500 mb-1">簽到時間</label><input type="time" id="edit-in" class="w-full border rounded p-2 text-center font-bold text-slate-700"></div><div><label class="block text-xs font-bold text-slate-500 mb-1">簽退時間</label><input type="time" id="edit-out" class="w-full border rounded p-2 text-center font-bold text-slate-700"></div><div class="flex gap-2 justify-end mt-6 pt-4 border-t border-slate-100"><button onclick="closeEditModal()" class="px-3 py-1 text-slate-500 font-bold text-sm">取消</button><button onclick="submitEditAttendance()" class="px-4 py-1 bg-blue-600 text-white font-bold rounded shadow-md text-sm">更新</button></div></div></div></div>
     <div id="manual-entry-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm"><div class="bg-white p-6 rounded-2xl shadow-2xl w-80 border border-slate-200"><h3 class="font-bold text-lg mb-4 text-slate-800">➕ 補登打卡紀錄</h3><div class="space-y-4"><div><label class="block text-xs font-bold text-slate-500 mb-1">行政人員</label><select id="manual-emp" class="w-full border rounded p-2 font-bold text-slate-700"></select></div><div><label class="block text-xs font-bold text-slate-500 mb-1">日期</label><input type="date" id="manual-date" class="w-full border rounded p-2 font-bold text-slate-700"></div><div><label class="block text-xs font-bold text-slate-500 mb-1">簽到時間</label><input type="time" id="manual-in" class="w-full border rounded p-2 text-center font-bold text-slate-700"></div><div><label class="block text-xs font-bold text-slate-500 mb-1">簽退時間</label><input type="time" id="manual-out" class="w-full border rounded p-2 text-center font-bold text-slate-700"></div><div class="flex gap-2 justify-end mt-6 pt-4 border-t border-slate-100"><button onclick="closeManualEntry()" class="px-3 py-1 text-slate-500 font-bold text-sm">取消</button><button onclick="submitManualEntry()" class="px-4 py-1 bg-emerald-600 text-white font-bold rounded shadow-md text-sm">確認補登</button></div></div></div></div>
 </body>
-
 </html>
